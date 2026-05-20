@@ -1,16 +1,38 @@
-# Chatbot Branching Logic — Facebook Messenger
+# Chatbot Branching Logic — Hybrid AI v2
 
 ## Overview
 
-This document explains **how the chatbot decides what to do** when a customer sends a message on Facebook Messenger. Think of it like a receptionist who listens to what someone says, figures out what they need, and directs them to the right department.
+This document explains **how the chatbot decides what to do** when a customer sends a message on Facebook Messenger. The v2 system uses a **hybrid approach**: it checks rules and Google Sheets data first (free), and only calls AI as a last resort (costs money).
 
-**Platform:** Facebook Messenger (customers message your Facebook Page)
+**Platform:** Facebook Messenger
+**Design:** Rules-first, AI-fallback
+
+---
+
+## The Hybrid Routing Principle
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  PRIORITY ORDER (checked top to bottom, first match wins)   │
+├─────────────────────────────────────────────────────────────┤
+│  1. Static direct replies (greetings/thanks/bye)    FREE    │
+│  2. Human support detection (angry/complaint)       FREE    │
+│  3. Order tracking detection (ORD-XXXXX/status)     FREE    │
+│  4. Order/buy intent detection                      FREE    │
+│  5. FAQ match from Google Sheets                    FREE    │
+│  6. Product match from Google Sheets                FREE    │
+│  7. AI Agent fallback (only if nothing above works) PAID    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why this order?**
+- Cheapest/fastest checks run first (static replies = instant, no data lookup)
+- More specific intents (support, tracking) before general ones (FAQ, products)
+- AI is the most expensive option — only used when everything else fails
 
 ---
 
 ## How Messages Arrive (Messenger-Specific)
-
-Unlike a simple chat widget, Messenger messages arrive through Meta's webhook system:
 
 ```
 Customer types in Messenger
@@ -24,152 +46,248 @@ n8n extracts:
   - message text (what they typed)
         |
         v
-Skip if: echo, delivery receipt, read receipt, or non-text (image/sticker)
+Skip if: echo, delivery receipt, read receipt, or non-text
         |
         v
-Process the text message through branching logic
+Normalize message (lowercase, remove special chars)
+        |
+        v
+Run through hybrid routing logic (this document)
 ```
 
 **Key Messenger concepts:**
-- **PSID** (Page-Scoped ID): Each person who messages your Page gets a unique ID. This is how you identify returning customers.
-- **24-hour messaging window**: You can only reply within 24 hours of the customer's last message.
-- **2000 character limit**: Each text reply can be max 2000 characters. Keep responses concise.
+- **PSID** (Page-Scoped ID): Each person who messages your Page gets a unique ID
+- **24-hour messaging window**: You can only reply within 24 hours of customer's last message
+- **2000 character limit**: Each text reply max 2000 characters
 
 ---
 
-## The 6 Branches
-
-Every customer message goes to **one** of these branches:
-
-| Branch # | Name | When To Use | Version |
-|----------|------|-------------|---------|
-| 1 | Direct Reply | Simple greetings, thanks, goodbyes | Future (v3) |
-| 2 | **Product Lookup** | Customer is asking about products | **v1 — Built** |
-| 3 | FAQ Answer | Customer has a general question | Future (v2) |
-| 4 | Draft Order Creation | Customer wants to buy something | Future (v4) |
-| 5 | Order Tracking | Customer wants to check their order status | Future (v5) |
-| 6 | Human Support Handoff | Customer needs a real person | Future (v6) |
-
-### Current v1 Behavior
-
-In version 1, there is **no classifier** yet. Every text message is treated as a product search. If the search finds nothing, the bot returns a helpful fallback with category suggestions.
-
----
-
-## How Classification Will Work (v2+)
-
-When the message classifier is added, it will check messages against **keywords** and **patterns**. The first match wins.
-
-### Decision Flowchart
-
-```
-Message text extracted from Messenger payload
-    |
-    v
-Does it contain order tracking keywords?
-    YES --> Branch 5: Order Tracking
-    NO  --> continue
-    |
-    v
-Does it contain ordering/buying keywords?
-    YES --> Branch 4: Draft Order Creation
-    NO  --> continue
-    |
-    v
-Does it contain human support keywords?
-    YES --> Branch 6: Human Support Handoff
-    NO  --> continue
-    |
-    v
-Does it contain product keywords?
-    YES --> Branch 2: Product Lookup
-    NO  --> continue
-    |
-    v
-Does it match FAQ keywords?
-    YES --> Branch 3: FAQ Answer
-    NO  --> continue
-    |
-    v
-Is it a simple greeting/thanks/goodbye?
-    YES --> Branch 1: Direct Reply
-    NO  --> continue
-    |
-    v
-Fallback: Send menu of options
-```
-
-**Why this order?** More specific intents (tracking, ordering) are checked first. Greetings are checked last because phrases like "Hi, I want to track my order" should go to tracking, not be treated as just a greeting.
-
----
-
-## Branch 2: Product Lookup (v1 — BUILT)
+## Branch 1: Static Direct Replies (NO AI)
 
 ### Purpose
-Find and display products from the Google Sheets Products tab. Since each row is a **variant** (specific size + color), the bot groups results by Product_ID to show a clean product listing.
+Respond instantly to simple conversational messages without any data lookup or AI call.
 
-### How It Works in v1
+### Detection Rules
+
+The message is treated as a greeting/thanks/bye **only if it is 3 words or fewer** AND contains a matching word. This prevents "Hi, I want to track my order" from being classified as just a greeting.
+
+### Trigger Words
+
+| Category | Words |
+|----------|-------|
+| **Greetings** | hi, hello, hey, hola, assalamualaikum, salam, yo, sup |
+| **Thanks** | thanks, thank, thankyou, thx, jazakallah, shukria |
+| **Goodbyes** | bye, goodbye, later, seeya, cya |
+
+### Responses
+
+| Detected As | Reply |
+|------------|-------|
+| Greeting | "Hello! Welcome to our store. I can help you find products, answer questions, or place an order. What are you looking for today?" |
+| Thanks | "You are welcome! Let me know if there is anything else I can help with." |
+| Bye | "Goodbye! Thanks for chatting with us. Come back anytime!" |
+
+### Cost: FREE (no sheets read, no AI)
+
+---
+
+## Branch 2: Human Support Detection (NO AI)
+
+### Purpose
+Immediately flag conversations that need a real person — angry customers, complaints, refund requests, or explicit "talk to human" requests.
+
+### Detection Rules
+
+Checked BEFORE products/FAQ because "I want to return my order" should go to support, not product search.
+
+### Trigger Words/Patterns
+
+| Category | Words/Patterns |
+|----------|---------------|
+| **Direct request** | human, agent, person, representative, manager, speak to, talk to |
+| **Complaints** | complaint, refund, fraud, overcharged, legal, lawyer |
+| **Angry patterns** | Message is mostly UPPERCASE and longer than 10 characters |
+
+### Response
 
 ```
-Customer message arrives via Messenger webhook
-    |
-    v
-Extract message text + sender PSID
-    |
-    v
-Read ALL rows from Products tab (Google Sheets)
-    |
-    v
-Filter: Active = "YES" only
-    |
-    v
-Score each variant against search terms from message
-    |
-    v
-Group matched variants by Product_ID
-    |
-    v
-Format top 5 products into a reply (< 2000 chars)
-    |
-    v
-Send reply via Messenger Send API (HTTP Request to Graph API)
+I understand you need help from our team. I have flagged your conversation for priority support.
+
+Our team will respond to you in this chat within 2-4 hours (business hours: Mon-Fri, 9 AM - 6 PM).
+
+If urgent, you can also email: support@yourbrand.com
+
+Is there anything else I can help with while you wait?
 ```
 
-### Trigger Keywords
+### Cost: FREE (no sheets read, no AI)
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Browsing | show me, do you have, what products, browse, catalog, collection |
-| Product types | t-shirt, tshirt, jeans, hoodie, jacket, dress, skirt, pants, shorts, sweater, shirt |
-| Attributes | black, white, red, blue, small, medium, large, xl, cotton, size |
-| Price-related | how much, price, cost, cheap, affordable, expensive, under |
-| Availability | in stock, available, do you carry, do you sell |
-| Specific | SKU, variant, stock, how many left |
+---
 
-### Search Logic (Code Node)
+## Branch 3: Order Tracking Detection (NO AI)
 
-1. Convert customer message to lowercase
-2. Remove special characters
-3. Split into words
-4. Remove common words (the, and, for, with, have, show, want, etc.) and words under 3 characters
-5. Match remaining words against each product's searchable fields:
+### Purpose
+Detect when a customer is asking about their order status or delivery.
+
+### Detection Rules
+
+| Category | Words/Patterns |
+|----------|---------------|
+| **Tracking words** | track, tracking, where is my order, order status, delivery status, has it shipped, my order, when will it arrive |
+| **Order ID pattern** | Any text matching `ORD-XXXXXXXX-XXX` format |
+
+### Response Logic
+
+**If order ID detected in message:**
+```
+I found your order reference: ORD-20250120-001
+
+Let me check the status for you. Our team will update you shortly with tracking details.
+
+If you need immediate help, type "speak to a human".
+```
+
+**If no order ID provided:**
+```
+I can help you track your order! Please provide your order number (it looks like ORD-YYYYMMDD-XXX).
+
+Example: "Track ORD-20250120-001"
+```
+
+### Cost: FREE (no AI — future versions will read Tracking tab automatically)
+
+---
+
+## Branch 4: Order/Buy Intent Detection (NO AI)
+
+### Purpose
+Detect when a customer wants to purchase something and guide them through the information needed.
+
+### Detection Rules
+
+| Category | Words |
+|----------|-------|
+| **Buy intent** | buy, order, purchase, i want, ill take, add to cart, i need, id like |
+
+### Response
+
+```
+Great, I would love to help you place an order!
+
+To create your order, I need:
+1. Which product? (e.g., Classic Black T-Shirt)
+2. What size?
+3. What color?
+4. Your name and email
+5. Shipping address
+
+Which product are you interested in? You can also say "show me t-shirts" to browse first.
+```
+
+### Cost: FREE (no AI — guides user to provide structured info)
+
+---
+
+## Branch 5: FAQ Match from Google Sheets (NO AI)
+
+### Purpose
+Answer common questions directly from the FAQ tab without calling AI.
+
+### When It Runs
+Only runs if Branches 1-4 didn't match. The FAQ sheet is read and searched.
+
+### How FAQ Matching Works
+
+1. **Normalize** the customer message (lowercase, remove special characters)
+2. **Extract meaningful words** (remove common words like "the", "and", "for", "what", "how", etc.)
+3. **Score each active FAQ row** against the search words:
+   - Keywords column match: +2 points per keyword hit
+   - Question column word match: +1 point per word hit
+4. **Threshold:** Score must be ≥ 3 to count as a "strong match"
+5. **If strong match found:** Reply with the Answer column directly — NO AI NEEDED
+6. **If no strong match:** Fall through to Product search
+
+### FAQ Tab Columns Used
+
+| Column | Role in Matching |
+|--------|-----------------|
+| **Keywords** | Primary matching — comma-separated trigger words (weighted 2x) |
+| **Question** | Secondary matching — words from the question itself (weighted 1x) |
+| **Answer** | The reply text sent to the customer |
+| **Active** | Must be "YES" — inactive FAQs are skipped |
+| **Sort_Order** | Tie-breaker if two FAQs score equally |
+
+### Example Matching
+
+| Customer Says | Search Words | Best FAQ Match | Score | AI Used? |
+|--------------|-------------|----------------|-------|----------|
+| "What is your return policy?" | return, policy | FAQ with Keywords: "return, refund, exchange, send back, money back" | 4 (2×return + 2×policy match) | No |
+| "How long does shipping take?" | long, shipping, take | FAQ with Keywords: "shipping, delivery, how long, days, arrive" | 6 | No |
+| "Do you accept PayPal?" | accept, paypal | FAQ with Keywords: "payment, pay, credit card, paypal" | 4 | No |
+| "What fabric is the hoodie made of?" | fabric, hoodie, made | No FAQ matches above threshold | 0 | Falls to Products |
+
+### Reply Format (FAQ Match)
+
+The Answer column text is sent directly — no modification needed:
+
+```
+[Answer from FAQ tab — exactly as written in your spreadsheet]
+```
+
+### Tips for Better FAQ Matching
+
+- Add as many keyword variations as possible in the Keywords column
+- Include misspellings customers commonly make
+- Use the Sort_Order column to prioritize when two FAQs might match
+- Set Active = "NO" for seasonal/outdated answers instead of deleting them
+
+### Cost: FREE (reads Google Sheets only — no AI call)
+
+---
+
+## Branch 6: Product Match from Google Sheets (NO AI)
+
+### Purpose
+Find and display matching products when the customer is searching or browsing.
+
+### When It Runs
+Only runs if FAQ didn't find a strong match.
+
+### How Product Matching Works
+
+1. **Extract search terms** from customer message (remove words < 3 chars and common stop words)
+2. **Filter:** Only products where Active = "YES"
+3. **Score each variant** by checking search terms against:
    - Product_Name
    - Category
    - Description
    - Size
    - Color
    - Search_Keywords
-6. Score = number of matching terms
-7. Filter products with score > 0
-8. Group by Product_ID, collecting in-stock sizes and colors
-9. Sort by score (highest first)
-10. Return top 5 products
+4. **Filter:** Only variants with score > 0
+5. **Group** matched variants by Product_ID (so one product doesn't show 12 times)
+6. **For each group:** Collect in-stock sizes and colors
+7. **Sort** by score (highest first), limit to top 5 products
+8. **Format** a friendly reply
 
-### Reply Format (Messenger)
+### Products Tab Columns Used
 
-**If products found:**
+| Column | Role in Matching |
+|--------|-----------------|
+| **Product_Name** | Searched against message terms |
+| **Category** | Searched (e.g., "t-shirts", "jeans", "hoodies") |
+| **Description** | Searched for additional context |
+| **Size** | Searched if customer mentions a size |
+| **Color** | Searched if customer mentions a color |
+| **Search_Keywords** | Extra searchable terms you add manually |
+| **Active** | Must be "YES" — inactive products hidden |
+| **In_Stock** | Used to show only available sizes/colors |
+| **Price** | Displayed in results |
+
+### Reply Format (Products Found)
+
 ```
-I found 2 products for you:
+I found 3 products for you:
 
 1. Classic Black T-Shirt — $29.99
    Sizes: S, M, L
@@ -179,10 +297,15 @@ I found 2 products for you:
    Sizes: S, M, L, XL
    Colors: Black, Charcoal
 
+3. Graphic Print Tee — $24.99
+   Sizes: M, L, XL
+   Colors: White, Grey
+
 Would you like to order any of these? Just tell me the product, size, and color!
 ```
 
-**If NO products found:**
+### Reply Format (No Products Found)
+
 ```
 I couldn't find any products matching "purple sandals".
 
@@ -196,273 +319,148 @@ Here are our categories:
 Try asking something like "Show me hoodies" or "Black t-shirts in large".
 ```
 
-**If search terms couldn't be extracted (message too short/generic):**
+### Cost: FREE (reads Google Sheets only — no AI call)
+
+---
+
+## Branch 7: AI Agent Fallback (COSTS MONEY)
+
+### Purpose
+Handle complex or conversational messages that cannot be answered from rules or data. This is the ONLY branch that calls AI.
+
+### When It Runs
+Only when ALL of these are true:
+- Not a greeting/thanks/bye
+- Not a support/tracking/order keyword match
+- No FAQ strong match found (score < 3)
+- No product match found (0 results)
+- Search terms exist (not an empty/very short message)
+
+### What the AI Agent Can Do
+
+| Allowed | Examples |
+|---------|---------|
+| General style advice | "What should I wear to a wedding?" |
+| Fabric/material questions | "Is cotton better than polyester for summer?" |
+| Styling tips | "How do I style a hoodie?" |
+| General brand questions | "What's your brand about?" |
+| Friendly conversation | "Can you recommend something comfortable?" |
+
+### What the AI Agent Must NOT Do
+
+| Forbidden | Why | What It Says Instead |
+|-----------|-----|---------------------|
+| Invent product names or prices | Could mislead customer | "Let me search our catalog — try asking 'show me [category]'" |
+| Make up stock/availability | Could cause order issues | "I can't check specific stock — try 'do you have [product] in [size]'" |
+| Provide order status | Could give wrong info | "For order status, please type 'track ORD-XXXXX'" |
+| Process refunds/complaints | Needs human judgment | "For refunds, type 'speak to a human' and our team will help" |
+| Discuss non-brand topics | Off-brand risk | "I'm best at helping with fashion and our store! What can I help you find?" |
+
+### AI System Prompt (in the workflow)
+
 ```
-I'd love to help you find something! Try asking about a product like:
+You are a friendly customer support assistant for a clothing brand. Your job is to help with general style advice, sizing guidance, and store-related questions.
 
-• "Show me t-shirts"
-• "Do you have hoodies?"
-• "Black jeans in size 32"
-• "What do you have under $40?"
-
-What are you looking for?
+RULES:
+1) Keep answers short (under 200 words).
+2) Do NOT invent product names, prices, stock levels, or delivery dates.
+3) Do NOT provide order status or tracking info — tell the customer to ask 'track my order ORD-XXXXX'.
+4) Do NOT process refunds or complaints — tell the customer to say 'speak to a human'.
+5) If you are unsure, recommend the customer speak with our support team.
+6) Stay within clothing brand support topics only.
 ```
 
-### Messenger-Specific Considerations
+### Cost: PAID (every AI Agent call costs API credits)
+
+---
+
+## Special Case: No Search Terms Extracted
+
+If the message is too short or contains only common words (e.g., "ok", "hmm", "??"), no meaningful search terms can be extracted. In this case, the bot replies with a helpful prompt WITHOUT calling AI:
+
+```
+I'd love to help! You can ask me about our products, shipping, returns, sizing, or place an order. What would you like to know?
+```
+
+### Cost: FREE (handled in the Code node, no AI call)
+
+---
+
+## Messages the Bot Ignores (No Reply)
+
+These events arrive from Meta but should NOT trigger any reply:
+
+| Event Type | How Detected | Why Ignore |
+|-----------|-------------|------------|
+| Delivery receipt | `messaging.delivery` exists | Just confirms message delivered |
+| Read receipt | `messaging.read` exists | Just confirms message seen |
+| Echo | `message.is_echo = true` | Message sent BY your page (not customer) |
+| Image/sticker/audio | `message.text` is missing | v2 only handles text |
+| Postback | `messaging.postback` exists | Button clicks — not yet implemented |
+
+---
+
+## Messenger Constraints
 
 | Constraint | How We Handle It |
 |-----------|-----------------|
-| 2000 character limit | Limit to top 5 products; truncate descriptions |
-| No markdown/bold | Use plain text, bullets (•), and line breaks |
-| No clickable buttons in text | Future: use Messenger button templates |
-| Reply must use Send API | HTTP Request to `graph.facebook.com/v18.0/me/messages` |
+| 2000 character limit | Prepare Reply node truncates to 1950 chars |
+| No markdown/bold | All replies use plain text + line breaks + bullet (•) |
+| 5-second response window | 200 OK sent immediately in parallel with processing |
+| 24-hour messaging window | All replies are type "RESPONSE" (within window) |
 
 ---
 
-## Branch 1: Direct Reply (Future — v3)
+## Decision Examples
 
-### Purpose
-Respond to simple conversational messages that do not need any data lookup.
-
-### Trigger Keywords
-
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Greetings | hi, hello, hey, good morning, good afternoon, good evening |
-| Thanks | thank you, thanks, thx, appreciate it |
-| Goodbyes | bye, goodbye, see you, take care |
-| Affirmations | ok, okay, sure, got it, understood, perfect |
-
-### Personalization via PSID
-
-When the classifier routes to Direct Reply, the bot can check if this PSID exists in the Customers tab:
-
-- **Known customer:** "Hi Sarah! Welcome back. How can I help?"
-- **Unknown customer:** "Hello! Welcome to [Brand Name]. I can help you find products, answer questions, or place orders. What would you like to do?"
-
-### Messenger Reply Format
-```
-{
-  "recipient": { "id": "SENDER_PSID" },
-  "messaging_type": "RESPONSE",
-  "message": { "text": "Hello! Welcome to [Brand Name]..." }
-}
-```
+| Customer Message | Route Taken | Why | AI? |
+|-----------------|-------------|-----|-----|
+| "Hi" | Branch 1 (greeting) | ≤3 words, contains "hi" | No |
+| "Hello, show me jeans" | Branch 6 (products) | >3 words, "hello" not sole intent | No |
+| "Thanks a lot" | Branch 1 (thanks) | ≤3 words, contains "thanks" | No |
+| "What's your return policy?" | Branch 5 (FAQ) | FAQ Keywords match "return" (score ≥3) | No |
+| "Show me black t-shirts" | Branch 6 (products) | Products match "black" + "t-shirts" | No |
+| "Where is my order?" | Branch 3 (tracking) | Contains "where is my order" | No |
+| "Track ORD-20250120-001" | Branch 3 (tracking) | Contains ORD-XXXXX pattern | No |
+| "I want to buy the hoodie" | Branch 4 (order) | Contains "buy" | No |
+| "I want to speak to someone" | Branch 2 (support) | Contains "speak to" | No |
+| "THIS IS TERRIBLE!" | Branch 2 (support) | Uppercase + angry pattern | No |
+| "What should I wear to a beach wedding?" | Branch 7 (AI) | No FAQ/product match | **Yes** |
+| "Is linen good for hot weather?" | Branch 7 (AI) | No FAQ/product match | **Yes** |
+| "hmm" | No-search-terms fallback | No meaningful words | No |
 
 ---
 
-## Branch 3: FAQ Answer (Future — v2)
+## How to Improve Matching (Reduce AI Usage)
 
-### Purpose
-Answer common questions using the FAQ tab in Google Sheets.
+If too many messages are hitting the AI fallback:
 
-### Trigger Keywords
+### Add more FAQ entries
+- Check what customers are asking that goes to AI
+- Create FAQ entries with good Keywords for those topics
+- Example: If customers ask "What's your brand story?" — add an FAQ for it
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Shipping | shipping, delivery, how long, ship, arrive, shipping cost |
-| Returns | return, refund, exchange, send back, money back |
-| Sizing | size, sizing, fit, measurement, size guide |
-| Payment | payment, pay, credit card, paypal, apple pay |
-| Discount | discount, coupon, promo code, sale, deal |
-| Care | wash, care, instructions, laundry |
+### Add more Search_Keywords to products
+- If "casual shirts" doesn't find your t-shirts, add "casual" to Search_Keywords
+- If "summer clothes" doesn't match, add "summer" to relevant products
 
-### Matching Logic
-1. Only return FAQs where Active = "YES"
-2. Score by keyword match count
-3. Tie-break by Sort_Order (lower = higher priority)
-4. Return the best-matching answer
+### Lower the FAQ threshold
+- The current threshold is score ≥ 3
+- If good FAQs are being missed, you could lower to ≥ 2 (but risk false matches)
 
----
-
-## Branch 4: Draft Order Creation (Future — v4)
-
-### Purpose
-Collect order details and save to Google Sheets Orders tab.
-
-### Trigger Keywords
-
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Buying intent | I want to buy, I want to order, purchase, I'll take |
-| Order language | order, buy, purchase, get me, I need, I'd like |
-
-### Order Flow (Messenger-Specific)
-
-In Messenger, multi-step conversations work like this:
-
-```
-Customer: "I want to order the black t-shirt"
-Bot: "Great! What size? (S, M, L, XL)"     ← Reply within 24h window
-Customer: "Large"                             ← Resets 24h window
-Bot: "Size L, Black. To ship your order..."  ← Reply within 24h window
-...and so on
-```
-
-**Important:** Each customer reply resets the 24-hour messaging window, so multi-step order collection works naturally in Messenger.
-
-### Auto-Filled Fields
-- **Channel**: "Messenger" (always, for this workflow)
-- **Customer_ID**: Look up by PSID in Customers tab (Chat_User_ID column)
+### Add more greeting/support trigger words
+- If customers say "hey there" and it goes to AI, add "hey" to greetings list
+- If customers say "need assistance" and it misses support, add "assistance"
 
 ---
 
-## Branch 5: Order Tracking (Future — v5)
+## Future Enhancements (v3+)
 
-### Purpose
-Look up order status from Tracking and Orders tabs.
-
-### Trigger Keywords
-
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Tracking | track, tracking, where is my order, order status |
-| Order reference | order number, ORD-, my order |
-| Shipping | has it shipped, when will it arrive, delivery |
-
-### Lookup via PSID
-
-Since we know the customer's PSID, we can:
-1. Look up their Customer_ID from the Customers tab (Chat_User_ID = PSID)
-2. Search Orders tab by Customer_ID
-3. Search Tracking tab by Order_ID
-
-This means known customers don't need to provide their order number — we can find it automatically.
-
----
-
-## Branch 6: Human Support Handoff (Future — v6)
-
-### Purpose
-Create a support ticket and tell the customer a human will follow up.
-
-### Trigger Keywords
-
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Direct request | talk to a human, real person, speak to someone, agent |
-| Frustration | this isn't helping, useless, doesn't work, frustrated |
-| Complex issues | complaint, wrong item, damaged, broken, overcharged |
-
-### Messenger-Specific Handoff
-
-In Messenger, "handoff" means:
-1. Bot creates a Support_Tickets row with full context (including PSID)
-2. Bot sends a message: "I've created ticket TKT-XXXXX. Our team will reply in this same chat within [X hours]."
-3. A human team member uses Facebook Page Inbox (or a tool like Respond.io) to continue the conversation
-4. The 24-hour window applies — human must reply within 24h of customer's last message
-
-**Handoff_Reason values:**
-- `customer_requested` — customer asked for a human
-- `bot_failed_3x` — bot couldn't understand 3 messages in a row
-- `angry_customer` — frustration/anger detected
-- `complex_issue` — payment, legal, damaged items
-- `policy_exception` — request outside standard policy
-
----
-
-## Fallback Logic
-
-### When No Branch Matches (v2+)
-
-```
-I'm not sure I understood that. Here's what I can help with:
-
-1. Products — "Show me t-shirts"
-2. Questions — "What's your return policy?"
-3. Place an order — "I want to buy..."
-4. Track an order — "Where is my order ORD-XXXXX?"
-5. Talk to our team — "Connect me with support"
-
-Which would you like?
-```
-
-### Fallback Escalation (v6)
-- 1st unknown: Show menu
-- 2nd unknown in a row: Show menu + "Say 'support' to talk to a person"
-- 3rd unknown in a row: Auto-create support ticket with Handoff_Reason = "bot_failed_3x"
-
----
-
-## Messenger Events the Bot Ignores
-
-These events arrive via the POST webhook but should NOT trigger a reply:
-
-| Event Type | How to Detect | Why Ignore |
-|-----------|--------------|------------|
-| Delivery receipt | `messaging.delivery` exists | Just confirms message was delivered |
-| Read receipt | `messaging.read` exists | Just confirms message was seen |
-| Echo | `message.is_echo = true` | This is a message YOUR page sent (not the customer) |
-| Image/sticker/audio | `message.text` is missing | v1 only handles text; future versions may handle images |
-| Postback | `messaging.postback` exists | For button clicks — not implemented in v1 |
-| Referral | `messaging.referral` exists | When someone clicks a ref link — future feature |
-
-The "Extract Message Data" Code node in the workflow handles all of these by returning `skip: true`.
-
----
-
-## Keyword Matching Setup (For v2+ Classifier)
-
-### Option A: Switch Node (No AI, Free)
-
-Convert message to lowercase, then check conditions in priority order:
-
-```
-1. Contains "track" OR "where is my order" OR "ORD-" OR "order status"
-   → Branch 5 (Order Tracking)
-
-2. Contains "buy" OR "order" OR "purchase" OR "I want" OR "I'll take"
-   → Branch 4 (Draft Order)
-
-3. Contains "speak to" OR "human" OR "agent" OR "representative"
-   OR angry patterns (ALL CAPS, "!!!", "terrible", "useless")
-   → Branch 6 (Human Handoff)
-
-4. Contains product keywords (t-shirt, jeans, hoodie, dress, etc.)
-   OR "show me" OR "in stock" OR "available" OR "price"
-   → Branch 2 (Product Lookup)
-
-5. Contains FAQ keywords (shipping, return, size, payment, discount)
-   → Branch 3 (FAQ)
-
-6. Contains greeting keywords (hi, hello, thanks, bye, ok)
-   → Branch 1 (Direct Reply)
-
-7. Default
-   → Fallback
-```
-
-### Option B: AI Classification (More Accurate)
-
-Use an AI node with this prompt:
-
-```
-Classify the following customer message into exactly one category.
-Return ONLY the category name, nothing else.
-
-Categories:
-- greeting (simple hi, thanks, bye, ok)
-- product_inquiry (asking about products, browsing, availability, sizes, colors, price)
-- faq (questions about shipping, returns, sizing policy, payment methods, discounts)
-- order_create (wants to buy/order something, add to cart, purchase)
-- order_track (asking about order status, delivery, tracking, where is my order)
-- human_support (wants a real person, is frustrated, complex issue, complaint)
-- unknown (cannot determine intent)
-
-Customer message: "{message_text}"
-```
-
----
-
-## Summary: Build Order
-
-| Version | What's Built | Classifier Needed? |
-|---------|-------------|-------------------|
-| **v1** | Product Lookup only (every message = product search) | No |
-| **v2** | + FAQ answers | Yes (add Switch or AI node) |
-| **v3** | + Greeting replies (personalized via PSID) | Yes |
-| **v4** | + Order creation (multi-step in Messenger) | Yes |
-| **v5** | + Order tracking (auto-lookup by PSID) | Yes |
-| **v6** | + Human handoff (ticket creation + escalation) | Yes |
-
-Each version adds one branch. The classifier is added in v2 and routes to all subsequent branches.
+| Feature | What It Adds |
+|---------|-------------|
+| **Full order creation** | Multi-step order flow with variant validation and Google Sheets write |
+| **Tracking tab lookup** | Actually read Tracking/Orders tabs for real status |
+| **Customer recognition** | Look up PSID in Customers tab for personalization |
+| **Support ticket creation** | Write to Support_Tickets tab during handoff |
+| **Conversation memory** | Remember context across multiple messages |
+| **Messenger buttons** | Send quick-reply buttons for common actions |

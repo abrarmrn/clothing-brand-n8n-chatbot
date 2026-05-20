@@ -1,10 +1,10 @@
-# n8n Workflow Plan — Facebook Messenger Architecture
+# n8n Workflow Plan — Hybrid AI v2 Architecture
 
 ## Overview
 
-This document explains **which n8n nodes you need** and **how they connect together** to build the Messenger chatbot workflow.
+This document explains the **Messenger Hybrid AI v2** workflow architecture — which nodes exist, how they connect, and why the system checks rules and Google Sheets **before** calling AI.
 
-This is a **Facebook Messenger chatbot** — NOT an n8n hosted chat widget. Messages arrive from Meta's webhook system and replies are sent via the Messenger Send API.
+**Core principle:** Save AI/API costs by answering from rules and data first. Only use the AI Agent when no confident answer can be given from static rules or Google Sheets.
 
 ---
 
@@ -15,103 +15,110 @@ This is a **Facebook Messenger chatbot** — NOT an n8n hosted chat widget. Mess
 | **Facebook Page** | What customers message |
 | **Meta Webhooks** | Delivers customer messages to your n8n webhook URL |
 | **n8n Webhooks** | Receives messages (POST) and verifies ownership (GET) |
-| **Google Sheets** | Your database (products, orders, FAQ, etc.) |
+| **Google Sheets** | Your database (Products, FAQ, Orders, Tracking, Customers, Support_Tickets) |
 | **Messenger Send API** | How n8n sends replies back to the customer |
-
-### Why Messenger Webhooks (Not n8n Chat Trigger)?
-
-The n8n "Chat Trigger" node is for n8n's built-in chat widget. This project uses **real Facebook Messenger** where customers message your actual Facebook Page. This requires:
-
-1. A **GET webhook** for Meta's one-time verification handshake
-2. A **POST webhook** to receive every incoming message
-3. An **HTTP Request node** to send replies via Facebook's Graph API
+| **AI Agent + Chat Model** | Fallback ONLY — handles complex questions that sheets/rules cannot answer |
 
 ---
 
-## Workflow Architecture (The Big Picture)
+## Cost-Saving Design
 
-### Path A: GET Webhook — Meta Verification (one-time setup)
+| Route | AI Used? | Cost |
+|-------|----------|------|
+| Greetings (hi, hello, assalamualaikum, thanks, bye) | No | **Free** |
+| FAQ answers (matched from FAQ tab) | No | **Free** |
+| Product lookup (matched from Products tab) | No | **Free** |
+| Order tracking detection | No | **Free** |
+| Human support detection | No | **Free** |
+| Order/buy intent detection | No | **Free** |
+| Complex/unclear questions (AI fallback) | **Yes** | **Costs money** |
+
+**Expected:** 70-90% of messages handled without AI.
+
+---
+
+## Full Architecture Diagram
+
+### Path A: GET Webhook — Meta Verification (one-time)
 
 ```
 Meta sends GET request (during webhook setup)
         |
         v
-[1. GET Webhook] — Receives verification request
+[1. GET Webhook (Verify)] — path: messenger-webhook
         |
         v
-[2. Verify Token Check] — Does hub.verify_token match our secret?
+[2. Verify Token Check] — hub.mode=subscribe AND hub.verify_token matches?
         |
-        ├── YES → [3. Respond with Challenge] — Return hub.challenge (200)
-        |
-        └── NO  → [4. Respond 403 Forbidden] — Reject the request
+        ├── YES → [3. Respond with Challenge] — return hub.challenge (200)
+        └── NO  → [4. Respond 403 Forbidden]
 ```
 
-### Path B: POST Webhook — Message Processing
+### Path B: POST Webhook — Hybrid Message Processing
 
 ```
 Customer sends message in Messenger
         |
         v
-Meta sends POST to your webhook
+[5. POST Webhook (Messages)] — path: messenger-webhook
         |
-        v
-[5. POST Webhook] — Receives message payload
-        |
-        ├──→ [6. Respond 200 OK] — Immediately acknowledge (Meta requires < 5 seconds)
-        |
-        └──→ [7. Extract Message Data] — Parse sender PSID + message text
+        ├──→ [6. Respond 200 OK] — immediate ACK (parallel)
+        └──→ [7. Extract Message Data] — parse PSID + text
                 |
                 v
-        [8. Is Valid Message?] — Skip echoes, delivery receipts, non-text
+        [8. Is Valid Text Message?] — skip echoes/delivery/read/non-text
                 |
-                ├── YES → [9. Message Classifier] — What does the customer want?
-                |            |
-                |            ├── product_inquiry → [10. Read Products] → [11. Search & Format] → [12. Send Reply]
-                |            ├── faq            → [FAQ nodes - future v2]
-                |            ├── greeting       → [Greeting reply - future v3]
-                |            ├── order_create   → [Order nodes - future v4]
-                |            ├── order_track    → [Tracking nodes - future v5]
-                |            ├── human_support  → [Handoff nodes - future v6]
-                |            └── unknown        → [Fallback reply]
+                ├── NO → (ends — no reply)
+                └── YES ↓
+                        v
+        [9. Hybrid Router (Rules First)] — checks static rules IN ORDER:
                 |
-                └── NO (skip) → (workflow ends — no reply needed)
-```
-
-### Current v1: Product Lookup Only
-
-In version 1, there is no message classifier yet. Every text message goes directly to product search:
-
-```
-[5. POST Webhook] → [6. Respond 200] + [7. Extract Message] → [8. Valid?] → [10. Read Products] → [11. Search & Format] → [12. Send Reply]
+                ├── greeting/thanks/bye? → direct reply text → [14. Prepare Reply]
+                ├── support keywords? → [12. Support Ticket Handler] → [14]
+                ├── tracking keywords? → [11. Tracking Lookup] → [14]
+                ├── buy/order keywords? → [13. Order Intent Handler] → [14]
+                └── none matched? → route = "check_sheets"
+                        |
+                        v
+        [10. Needs Sheet Lookup?] — route == "check_sheets"?
+                |
+                ├── YES → Read FAQ Sheet + Read Products Sheet (parallel)
+                |              |
+                |              v
+                |         [FAQ + Product Search (No AI)] — score FAQ then products
+                |              |
+                |              ├── FAQ strong match? → reply with Answer (aiUsed: false) → [14]
+                |              ├── Product match? → formatted product list (aiUsed: false) → [14]
+                |              └── No match? → aiUsed: true
+                |                      |
+                |                      v
+                |              [AI Needed?] — aiUsed == true?
+                |                      |
+                |                      ├── YES → [AI Agent (Fallback Only)] + [Chat Model] → [14]
+                |                      └── NO  → [14. Prepare Reply]
+                |
+                └── NO (direct reply from router) → [14. Prepare Reply]
+                        |
+                        v
+        [14. Prepare Reply] — truncate to 2000 chars, format
+                |
+                v
+        [15. Send Messenger Reply] — HTTP POST to Graph API
 ```
 
 ---
 
-## All Nodes Explained
+## All Nodes Explained (17 total)
 
 ### Node 1: GET Webhook (Verify)
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Webhook |
-| **HTTP Method** | GET |
+| **Type** | Webhook |
+| **Method** | GET |
 | **Path** | `messenger-webhook` |
-| **Response Mode** | Response Node (custom response) |
-| **Purpose** | Meta calls this once during webhook setup to verify you own the URL |
-
-**What Meta sends:**
-```
-GET https://your-n8n.com/webhook/messenger-webhook
-  ?hub.mode=subscribe
-  &hub.verify_token=YOUR_SECRET_TOKEN
-  &hub.challenge=1234567890
-```
-
-**What your workflow must do:**
-- Check that `hub.mode` is "subscribe"
-- Check that `hub.verify_token` matches your secret
-- If both match: respond with `hub.challenge` value as plain text (200)
-- If token doesn't match: respond with 403
+| **Response Mode** | Response Node |
+| **Purpose** | Meta calls this once to verify webhook ownership |
 
 ---
 
@@ -119,13 +126,10 @@ GET https://your-n8n.com/webhook/messenger-webhook
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | IF |
-| **Purpose** | Validates the verify token from Meta |
-| **Condition 1** | `query['hub.mode']` equals `subscribe` |
-| **Condition 2** | `query['hub.verify_token']` equals `CHANGE_ME_VERIFY_TOKEN` |
-| **Combinator** | AND (both must be true) |
-
-**Important:** Replace `CHANGE_ME_VERIFY_TOKEN` with your own secret string. The same value must be entered in Meta Developer Console.
+| **Type** | IF |
+| **Conditions** | hub.mode == "subscribe" AND hub.verify_token == "CHANGE_ME_VERIFY_TOKEN" |
+| **TRUE** | → Respond with Challenge |
+| **FALSE** | → Respond 403 |
 
 ---
 
@@ -133,11 +137,9 @@ GET https://your-n8n.com/webhook/messenger-webhook
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Respond to Webhook |
-| **Response Code** | 200 |
-| **Response Body** | The value of `hub.challenge` from the query params |
-| **Content-Type** | text/plain |
-| **Purpose** | Proves to Meta that you control this webhook URL |
+| **Type** | Respond to Webhook |
+| **Code** | 200 |
+| **Body** | hub.challenge value (plain text) |
 
 ---
 
@@ -145,10 +147,9 @@ GET https://your-n8n.com/webhook/messenger-webhook
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Respond to Webhook |
-| **Response Code** | 403 |
-| **Response Body** | "Forbidden" |
-| **Purpose** | Rejects verification attempts with wrong token |
+| **Type** | Respond to Webhook |
+| **Code** | 403 |
+| **Body** | "Forbidden" |
 
 ---
 
@@ -156,33 +157,12 @@ GET https://your-n8n.com/webhook/messenger-webhook
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Webhook |
-| **HTTP Method** | POST |
+| **Type** | Webhook |
+| **Method** | POST |
 | **Path** | `messenger-webhook` |
-| **Response Mode** | Response Node (custom response) |
 | **Purpose** | Receives every message/event from Messenger |
 
-**What Meta sends (example):**
-```json
-{
-  "object": "page",
-  "entry": [{
-    "id": "PAGE_ID",
-    "time": 1234567890,
-    "messaging": [{
-      "sender": { "id": "SENDER_PSID" },
-      "recipient": { "id": "PAGE_ID" },
-      "timestamp": 1234567890,
-      "message": {
-        "mid": "MESSAGE_ID",
-        "text": "Show me black t-shirts"
-      }
-    }]
-  }]
-}
-```
-
-**Important:** Meta expects a 200 response within 5 seconds or it will retry. That's why we respond immediately and process the message in parallel.
+Meta sends the message payload here. We respond 200 immediately (Node 6) and process in parallel.
 
 ---
 
@@ -190,12 +170,12 @@ GET https://your-n8n.com/webhook/messenger-webhook
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Respond to Webhook |
-| **Response Code** | 200 |
-| **Response Body** | "EVENT_RECEIVED" |
-| **Purpose** | Tells Meta "I got the message" so it doesn't retry |
+| **Type** | Respond to Webhook |
+| **Code** | 200 |
+| **Body** | "EVENT_RECEIVED" |
+| **Purpose** | Tell Meta we received it (prevents retries) |
 
-**This runs in parallel with message processing** — both the 200 response and the Extract Message node connect directly from the POST Webhook.
+Runs in **parallel** with Extract Message Data — both connect from POST Webhook.
 
 ---
 
@@ -203,259 +183,318 @@ GET https://your-n8n.com/webhook/messenger-webhook
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Code |
-| **Purpose** | Parses the Meta webhook payload to extract useful data |
+| **Type** | Code |
+| **Purpose** | Parse Meta's nested JSON to get sender PSID and message text |
 
-**What it extracts:**
-- `senderPsid` — the unique ID of the person who sent the message
-- `messageText` — the actual text they typed
+**Extracts:**
+- `senderPsid` — unique ID for the person
+- `messageText` — what they typed
 
-**What it skips (returns `skip: true`):**
-- Delivery receipt events (`messaging.delivery`)
-- Read receipt events (`messaging.read`)
-- Echo messages (`message.is_echo` — messages sent BY the page)
-- Non-text messages (images, stickers, audio — no `message.text`)
-
----
-
-### Node 8: Is Valid Message?
-
-| Setting | Value |
-|---------|-------|
-| **Node Type** | IF |
-| **Condition** | `skip` equals `false` |
-| **TRUE path** | Continue to product search (or future classifier) |
-| **FALSE path** | Stop — no reply needed for delivery/read/echo events |
+**Skips (returns skip: true):**
+- Delivery receipts
+- Read receipts
+- Echo messages (sent BY the page)
+- Non-text (images, stickers, audio)
 
 ---
 
-### Node 9: Message Classifier (Future — Not in v1)
+### Node 8: Is Valid Text Message?
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | AI Agent OR Switch node |
-| **Purpose** | Routes messages to the correct branch |
-| **Categories** | greeting, product_inquiry, faq, order_create, order_track, human_support, unknown |
-
-**In v1:** This node doesn't exist yet. All valid messages go directly to product search.
-
-**In v2+:** This will be added between "Is Valid Message?" and the branch-specific nodes. See `chatbot-branching-logic.md` for the full classification system.
+| **Type** | IF |
+| **Condition** | skip == false |
+| **TRUE** | → Continue to Hybrid Router |
+| **FALSE** | → End (no reply needed) |
 
 ---
 
-### Node 10: Read Products Sheet
+### Node 9: Hybrid Router (Rules First)
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets — Read (get all rows) |
+| **Type** | Code |
+| **Purpose** | The brain of the hybrid system — checks rules in priority order |
+
+**Logic order:**
+
+1. **Greeting/Thanks/Bye** (≤3 words, contains greeting word) → instant static reply
+2. **Support keywords** (human, agent, complaint, refund, fraud, angry patterns) → support handler
+3. **Tracking keywords** (track, order status, ORD-XXXXX pattern) → tracking handler
+4. **Buy/Order keywords** (buy, order, purchase, I want) → order intent handler
+5. **None matched** → pass to sheet lookup (FAQ + Products)
+
+**Why this order?**
+- Support and tracking are checked before products because "I want to return my order" should go to support, not product search
+- Greetings checked first because they're the cheapest (no sheet read needed)
+
+---
+
+### Node 10: Needs Sheet Lookup?
+
+| Setting | Value |
+|---------|-------|
+| **Type** | IF |
+| **Condition** | route == "check_sheets" |
+| **TRUE** | → Read FAQ + Read Products (parallel) |
+| **FALSE** | → Prepare Reply (direct static reply from router) |
+
+**Why this split?** If the Hybrid Router already produced a reply (greeting, support, tracking, order), we skip reading Google Sheets entirely — saves API calls and time.
+
+---
+
+### Node 10a: Read FAQ Sheet
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Google Sheets — Read |
+| **Document** | Clothing Brand Chatbot Database |
+| **Sheet** | FAQ |
+| **Purpose** | Loads all FAQ rows for keyword matching |
+
+---
+
+### Node 10b: Read Products Sheet
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Google Sheets — Read |
 | **Document** | Clothing Brand Chatbot Database |
 | **Sheet** | Products |
-| **Purpose** | Loads all product variants from the Products tab |
+| **Purpose** | Loads all product variants for search matching |
 
-**Columns read:**
-Product_ID, Variant_SKU, Product_Name, Category, Description, Price, Currency, Size, Color, Stock_Qty, In_Stock, Image_URL, Product_URL, Search_Keywords, Active
-
-**Why read ALL rows (not search)?** The search logic needs to match against multiple columns simultaneously (Product_Name, Category, Description, Color, Size, Search_Keywords). A Code node handles this more flexibly than Google Sheets' built-in filter.
+Both run in **parallel** to minimize wait time.
 
 ---
 
-### Node 11: Search & Format Products
+### Node 10c: FAQ + Product Search (No AI)
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Code |
-| **Purpose** | Matches customer message against products and builds a reply |
+| **Type** | Code |
+| **Purpose** | Searches FAQ first, then Products. Only falls to AI if neither matches. |
 
-**Logic:**
-1. Extract meaningful search terms from customer message (remove short/common words)
-2. Filter only Active = "YES" products
-3. Score each variant by how many search terms match its searchable fields
-4. Group results by Product_ID (so one product shows once with all its sizes/colors)
-5. Sort by relevance score, show top 5
-6. Build a formatted text reply
+**FAQ matching logic:**
+1. Extract meaningful words from customer message
+2. Score each active FAQ by keyword match (Keywords column + Question words)
+3. If best score ≥ 3 → strong match → return FAQ Answer directly (no AI)
 
-**If products found:**
-```
-I found 2 products for you:
+**Product matching logic (if FAQ didn't match):**
+1. Score each active product variant against search terms
+2. Group by Product_ID, collect in-stock sizes and colors
+3. If any products found → format reply (no AI)
 
-1. Classic Black T-Shirt — $29.99
-   Sizes: S, M, L
-   Colors: Black, White, Navy
-
-2. Premium V-Neck Tee — $34.99
-   Sizes: S, M, L, XL
-   Colors: Black, Charcoal
-
-Would you like to order any of these? Just tell me the product, size, and color!
-```
-
-**If NO products found:**
-```
-I couldn't find any products matching "purple sandals".
-
-Here are our categories:
-• T-Shirts
-• Jeans
-• Hoodies
-• Dresses
-• Accessories
-
-Try asking something like "Show me hoodies" or "Black t-shirts in large".
-```
+**If neither matched:** Set `aiUsed: true` → falls through to AI Agent
 
 ---
 
-### Node 12: Send Messenger Reply
+### Node 10d: AI Needed?
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | HTTP Request |
+| **Type** | IF |
+| **Condition** | aiUsed == true |
+| **TRUE** | → AI Agent (Fallback Only) |
+| **FALSE** | → Prepare Reply (FAQ or product reply) |
+
+---
+
+### Node 10e: AI Agent (Fallback Only)
+
+| Setting | Value |
+|---------|-------|
+| **Type** | AI Agent (LangChain) |
+| **Purpose** | Generates a helpful reply ONLY when rules and sheets couldn't answer |
+
+**System prompt rules:**
+- Keep answers short (under 200 words)
+- Do NOT invent product names, prices, stock levels, or delivery dates
+- Do NOT provide order status or tracking info
+- Do NOT process refunds or complaints
+- If unsure, recommend speaking with support team
+- Stay within clothing brand support topics only
+
+---
+
+### Node 10f: Chat Model
+
+| Setting | Value |
+|---------|-------|
+| **Type** | LangChain Chat OpenAI |
+| **Model** | gpt-4o-mini (cheapest) |
+| **Purpose** | The AI model that powers the AI Agent |
+| **Credential** | Placeholder — replace with your OpenAI API key |
+
+---
+
+### Node 11: Tracking Lookup (No AI)
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Code |
+| **Purpose** | Handles order tracking requests |
+| **AI Used?** | No |
+
+If order ID detected in message → acknowledge and confirm lookup.
+If no order ID → ask customer to provide it.
+
+---
+
+### Node 12: Support Ticket Handler (No AI)
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Code |
+| **Purpose** | Handles human support requests and angry customers |
+| **AI Used?** | No |
+
+Returns a message confirming the request has been escalated to the team.
+
+---
+
+### Node 13: Order Intent Handler
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Code |
+| **Purpose** | Handles buy/order intent detection |
+| **AI Used?** | No |
+
+Returns a message asking for the product details needed to create an order.
+
+---
+
+### Node 14: Prepare Reply
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Code |
+| **Purpose** | Normalizes the reply text before sending |
+
+**What it does:**
+- Extracts reply text from whichever upstream node provided it
+- Truncates to 1950 characters (Messenger limit is 2000)
+- Provides a fallback message if something went wrong
+
+---
+
+### Node 15: Send Messenger Reply
+
+| Setting | Value |
+|---------|-------|
+| **Type** | HTTP Request |
 | **Method** | POST |
 | **URL** | `https://graph.facebook.com/v18.0/me/messages` |
-| **Authentication** | Header Auth (Bearer token with Page Access Token) |
-| **Purpose** | Sends the reply back to the customer in Messenger |
-
-**Request body:**
-```json
-{
-  "recipient": {
-    "id": "SENDER_PSID"
-  },
-  "messaging_type": "RESPONSE",
-  "message": {
-    "text": "The formatted product reply..."
-  }
-}
-```
-
-**Authentication:** Uses an HTTP Header Auth credential with:
-- Header Name: `Authorization`
-- Header Value: `Bearer EAAxxxxxxx...` (your Page Access Token)
+| **Auth** | Header Auth (Bearer token — Page Access Token) |
+| **Body** | `{ recipient: { id: PSID }, messaging_type: "RESPONSE", message: { text: reply } }` |
 
 ---
 
 ## Node Connections Summary
 
-### Path A: GET Verification
-
 | From | To | Condition |
 |------|----|-----------|
-| GET Webhook (Verify) | Verify Token Check | Always |
-| Verify Token Check | Respond with Challenge | TRUE (token matches) |
-| Verify Token Check | Respond 403 Forbidden | FALSE (token wrong) |
-
-### Path B: POST Message Processing (v1)
-
-| From | To | Condition |
-|------|----|-----------|
-| POST Webhook (Messages) | Respond 200 OK | Always (parallel) |
-| POST Webhook (Messages) | Extract Message Data | Always (parallel) |
-| Extract Message Data | Is Valid Message? | Always |
-| Is Valid Message? | Read Products Sheet | TRUE (valid text message) |
-| Is Valid Message? | (nothing — ends) | FALSE (echo/delivery/read) |
-| Read Products Sheet | Search & Format Products | Always |
-| Search & Format Products | Send Messenger Reply | Always |
-
----
-
-## Future Nodes (v2-v6)
-
-These will be added in future versions:
-
-| Version | Nodes to Add | Connects After |
-|---------|-------------|----------------|
-| v2 | FAQ Search + FAQ Reply | Message Classifier → faq branch |
-| v3 | Greeting Reply (personalized) | Message Classifier → greeting branch |
-| v4 | Collect Order Info + Validate Variant + Save Order + Confirm | Message Classifier → order_create branch |
-| v5 | Extract Order # + Tracking Lookup + Orders Fallback + Reply | Message Classifier → order_track branch |
-| v6 | Priority Logic + Create Ticket + Handoff Reply | Message Classifier → human_support branch |
-
-All future reply nodes will use the same **Send Messenger Reply** pattern (HTTP Request to Graph API with sender PSID).
+| GET Webhook | Verify Token Check | Always |
+| Verify Token Check | Respond with Challenge | TRUE |
+| Verify Token Check | Respond 403 | FALSE |
+| POST Webhook | Respond 200 OK | Always (parallel) |
+| POST Webhook | Extract Message Data | Always (parallel) |
+| Extract Message Data | Is Valid Text Message? | Always |
+| Is Valid Text Message? | Hybrid Router | TRUE |
+| Is Valid Text Message? | (ends) | FALSE |
+| Hybrid Router | Needs Sheet Lookup? | Always |
+| Needs Sheet Lookup? | Read FAQ + Read Products | TRUE (route=check_sheets) |
+| Needs Sheet Lookup? | Prepare Reply | FALSE (direct reply) |
+| Read FAQ Sheet | FAQ + Product Search | Always |
+| Read Products Sheet | FAQ + Product Search | Always |
+| FAQ + Product Search | AI Needed? | Always |
+| AI Needed? | AI Agent | TRUE (aiUsed=true) |
+| AI Needed? | Prepare Reply | FALSE |
+| AI Agent | Prepare Reply | Always |
+| Tracking Lookup | Prepare Reply | Always |
+| Support Ticket Handler | Prepare Reply | Always |
+| Order Intent Handler | Prepare Reply | Always |
+| Prepare Reply | Send Messenger Reply | Always |
 
 ---
 
-## Error Handling
+## Credentials Required (3 total)
 
-### Error: Google Sheets Connection Failed
-
-| Where | What Happens | User Sees |
-|-------|-------------|-----------|
-| Read Products Sheet | Node throws error | Send a fallback reply: "I'm having trouble looking that up. Please try again in a moment." |
-
-**How to set up:** Add an Error output from the Google Sheets node, connect it to a Code node that builds a fallback message, then to the Send Messenger Reply node.
-
-### Error: Messenger Send API Failed
-
-| Where | What Happens | Possible Cause |
-|-------|-------------|----------------|
-| Send Messenger Reply | HTTP 400/401/403 | Page Access Token expired or invalid |
-
-**How to handle:** Check n8n execution logs. Regenerate the Page Access Token if expired.
-
-### Error: Meta Sends Retry (Duplicate Messages)
-
-| Where | What Happens | Why |
-|-------|-------------|-----|
-| POST Webhook | Same message arrives twice | n8n didn't respond 200 fast enough |
-
-**How to handle:** The "Respond 200 OK" node runs in parallel with processing, so this should not happen. If it does, check n8n performance/load.
+| Credential | Type in n8n | What For | When It's Used |
+|-----------|-------------|----------|----------------|
+| **Google Sheets OAuth2** | Google Sheets OAuth2 | Reading FAQ and Products tabs | Every message that reaches sheet lookup |
+| **Facebook Page Access Token** | Header Auth | Sending replies via Messenger | Every reply |
+| **OpenAI API** | OpenAI API | AI Agent fallback responses | Only when rules + sheets can't answer (10-30% of messages) |
 
 ---
 
-## Credentials Required
-
-| Credential | Type in n8n | What For |
-|-----------|-------------|----------|
-| **Google Sheets OAuth2** | Google Sheets OAuth2 | Reading product data from your spreadsheet |
-| **Facebook Page Access Token** | Header Auth | Sending replies via Messenger Send API |
-
-**How to set up each credential:** See `messenger-import-instructions.md` for step-by-step guides.
-
-**Security:** No credentials are stored in this repository. The JSON file uses placeholder values that you replace inside n8n.
-
----
-
-## Data Flow (v1)
+## Data Flow
 
 ```
-Messenger → Meta → POST Webhook
+Messenger → Meta → POST Webhook → 200 OK (parallel)
                         |
                         v
-              Extract sender PSID + message text
+              Extract PSID + text
                         |
                         v
-              Read ALL rows from Products tab
+              Hybrid Router (rules check)
+                        |
+           ┌────────────┼────────────────┐
+           |            |                |
+      greeting/      tracking/        check_sheets
+      support/       order              |
+      (static)       (static)     Read FAQ + Products
+           |            |                |
+           |            |         Score & Match
+           |            |                |
+           |            |         ┌──────┴──────┐
+           |            |         |             |
+           |            |     FAQ/Product    AI Agent
+           |            |      (free)       (costs $)
+           └────────────┼─────────┴─────────────┘
                         |
                         v
-              Search/score/group/format in Code node
+                  Prepare Reply
                         |
                         v
-              Send reply via Graph API → Messenger → Customer
+              Send via Graph API → Customer sees reply
 ```
 
 ---
 
-## Testing Checklist (v1)
+## Testing Checklist
 
-| # | Test | What to Send in Messenger | Expected Result |
-|---|------|--------------------------|-----------------|
-| 1 | Basic product search | "Show me t-shirts" | Returns t-shirt products with sizes/colors |
-| 2 | Specific variant query | "Black hoodie in large" | Returns hoodie with stock info |
-| 3 | No results | "Purple sandals" | Friendly "not found" with categories list |
-| 4 | Price query | "What do you have under $40?" | Products under $40 |
-| 5 | Short/empty query | "Hi" | Helpful prompt (no search terms extracted) |
-| 6 | Non-text message | Send a photo | No reply (skipped correctly) |
-| 7 | Active filter | Search for a product with Active = "NO" | Should NOT appear in results |
-| 8 | Out of stock | Search for product with all variants Stock_Qty = 0 | Shows product with "out of stock" note |
+| # | Test | Send in Messenger | Expected Route | AI Used? |
+|---|------|-------------------|---------------|----------|
+| 1 | Greeting | "Hi" | greeting → static reply | No |
+| 2 | Thanks | "Thank you" | thanks → static reply | No |
+| 3 | Bye | "Goodbye" | bye → static reply | No |
+| 4 | FAQ match | "What is your return policy?" | check_sheets → faq_match | No |
+| 5 | Product match | "Show me t-shirts" | check_sheets → product_match | No |
+| 6 | No product | "Purple sandals" | check_sheets → no match → AI | Yes |
+| 7 | Tracking | "Where is my order?" | tracking handler | No |
+| 8 | Tracking with ID | "Track ORD-20250120-001" | tracking handler | No |
+| 9 | Support | "I want to talk to a human" | support handler | No |
+| 10 | Angry | "THIS IS TERRIBLE SERVICE" | support handler | No |
+| 11 | Order intent | "I want to buy the black t-shirt" | order handler | No |
+| 12 | Style question | "What should I wear to a wedding?" | AI fallback | Yes |
+| 13 | Complex question | "Is cotton breathable in summer?" | AI fallback | Yes |
+| 14 | Non-text | (send a photo) | skipped — no reply | No |
+| 15 | Delivery receipt | (auto from Meta) | skipped — no reply | No |
 
 ---
 
-## Messenger-Specific Limitations
+## Comparison: v1 vs v2
 
-| Limitation | Details |
-|-----------|---------|
-| **Message length** | Messenger supports up to 2000 characters per text message. If product list is longer, truncate to top 3-4 products. |
-| **Rate limits** | Standard rate limit: 200 API calls per hour per page. This is per OUTGOING message. |
-| **24-hour window** | You can only message a user within 24 hours of their last message to you (standard messaging). |
-| **No formatting** | Messenger text messages don't support markdown, bold, or italic. Use plain text and line breaks only. |
-| **Image support** | Future versions can send product images using Messenger's attachment API (not text). |
+| Feature | v1 | v2 |
+|---------|----|----|
+| Greetings | Not handled (treated as product search) | Static reply (free) |
+| FAQ | Not handled | Matched from FAQ sheet (free) |
+| Products | Always runs product search | Runs only when needed (free) |
+| Tracking | Not handled | Detected and replied (free) |
+| Support | Not handled | Detected and replied (free) |
+| Order intent | Not handled | Detected with guidance (free) |
+| AI fallback | None | AI Agent for complex questions (costs $) |
+| Nodes | 11 | 17 |
+| Credentials | 2 | 3 |
+| Message routing | None (all = product search) | Priority-ordered hybrid routing |

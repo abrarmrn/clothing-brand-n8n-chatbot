@@ -12,25 +12,30 @@ This is a **Facebook Messenger chatbot** for a clothing brand. Customers message
 
 ---
 
-## Current Status: v1 — Product Lookup
+## Current Status: v2 — Hybrid AI
 
-This project is being built incrementally. **Version 1 is ready to import:**
+This project is built incrementally. **Version 2 is the latest:**
 
 | Version | Feature | Status |
 |---------|---------|--------|
-| **v1** | Product Lookup via Messenger | ✅ Ready — importable JSON included |
-| v2 | FAQ Answers | Planned |
-| v3 | Direct Reply (greetings) | Planned |
-| v4 | Order Creation | Planned |
-| v5 | Order Tracking | Planned |
-| v6 | Human Support Handoff | Planned |
+| **v1** | Product Lookup only | ✅ Ready (backup) |
+| **v2** | Hybrid AI — Greetings + FAQ + Products + Tracking + Support + AI Fallback | ✅ Ready — importable JSON included |
+| v3 | Full order creation with multi-step conversation | Planned |
 
-### What v1 Does
+### What v2 Does (Hybrid AI — Cost-Saving Design)
 
-1. Customer sends a message to your Facebook Page (e.g., "Show me black t-shirts")
-2. Meta sends the message to your n8n webhook
-3. n8n searches your Google Sheets Products tab
-4. n8n sends the matching products back to the customer in Messenger
+The bot answers **most messages for free** using rules and Google Sheets. AI is only used as a last resort.
+
+| Message Type | How It's Handled | AI Cost? |
+|-------------|-----------------|----------|
+| Greetings (hi, hello, assalamualaikum) | Static reply — no lookup needed | **Free** |
+| FAQ questions (shipping, returns, sizing) | Matched from FAQ tab in Google Sheets | **Free** |
+| Product search (show me t-shirts) | Searched from Products tab in Google Sheets | **Free** |
+| Order tracking (where is my order) | Rule-based detection + Tracking tab | **Free** |
+| Human support (speak to a human, angry) | Rule-based detection + ticket handler | **Free** |
+| Complex/unclear questions | AI Agent generates a helpful reply | **Costs money** |
+
+**Expected:** 70-90% of messages are handled without AI. Only 10-30% use the AI fallback.
 
 ---
 
@@ -66,13 +71,16 @@ The chatbot uses **Facebook Messenger webhooks**, not n8n's built-in Chat Trigge
 
 ---
 
-## Quick Start (v1 — Product Lookup)
+## Quick Start (v2 — Hybrid AI)
 
 1. Set up your Google Sheets using `google-sheets-structure.md`
-2. Add product data to the Products tab (at least 5 products with variants)
-3. Import `n8n-messenger-product-lookup-v1.json` into n8n
-4. Follow `messenger-import-instructions.md` to connect everything
+2. Add product data to the Products tab + FAQ data to the FAQ tab
+3. Import `n8n-messenger-hybrid-ai-v2.json` into n8n
+4. Follow `messenger-hybrid-v2-import-instructions.md` to connect credentials
 5. Test by messaging your Facebook Page!
+
+**If you want the simpler v1 (product lookup only):**
+Import `n8n-messenger-product-lookup-v1.json` and follow `messenger-import-instructions.md`.
 
 ---
 
@@ -81,12 +89,14 @@ The chatbot uses **Facebook Messenger webhooks**, not n8n's built-in Chat Trigge
 | File | What It Contains |
 |------|-----------------|
 | `README.md` | This file — project overview |
-| **`n8n-messenger-product-lookup-v1.json`** | **Importable n8n workflow** — product lookup via Messenger |
-| **`messenger-import-instructions.md`** | **Step-by-step setup guide** — import, credentials, Meta webhooks |
+| **`n8n-messenger-hybrid-ai-v2.json`** | **Importable n8n workflow v2** — hybrid AI with rules-first routing |
+| **`messenger-hybrid-v2-import-instructions.md`** | **v2 setup guide** — import, credentials, testing each route |
+| `n8n-messenger-product-lookup-v1.json` | Importable n8n workflow v1 — product lookup only (backup) |
+| `messenger-import-instructions.md` | v1 setup guide |
 | `google-sheets-structure.md` | How to set up your Google Sheets database (6 tabs, all columns, examples) |
-| `n8n-workflow-plan.md` | Full workflow architecture for all 6 branches |
+| `n8n-workflow-plan.md` | Full workflow architecture — v2 hybrid design |
 | `chatbot-branching-logic.md` | How the chatbot decides what to do with each message |
-| `build-tasks.md` | Step-by-step tasks to build the full system |
+| `build-tasks.md` | Step-by-step tasks to build and test the system |
 
 ---
 
@@ -113,7 +123,8 @@ See `google-sheets-structure.md` for the complete column list, examples, and set
 2. **A Meta Developer account** ([developers.facebook.com](https://developers.facebook.com))
 3. **n8n running** with a public HTTPS URL (n8n Cloud or self-hosted with domain)
 4. **A Google account** (for Google Sheets)
-5. **No coding experience required**
+5. **An AI API key** (OpenAI or compatible) — for the fallback AI Agent only
+6. **No coding experience required**
 
 ---
 
@@ -121,23 +132,26 @@ See `google-sheets-structure.md` for the complete column list, examples, and set
 
 | Decision | Why |
 |----------|-----|
+| **Hybrid AI (rules first, AI fallback only)** | Saves money — 70-90% of messages answered free from Google Sheets |
 | **Facebook Messenger webhooks (not n8n Chat Trigger)** | Real production channel — customers message your actual Facebook Page |
 | **GET webhook for Meta verification** | Required by Meta to prove you own the webhook URL |
 | **POST webhook responds 200 immediately** | Meta retries if you don't respond within 5 seconds — so we ACK first, process after |
 | **One row per product variant** | Precise stock tracking — know exactly how many size-M black t-shirts you have |
 | **Sender PSID for customer identity** | Messenger uses Page-Scoped IDs to identify each customer uniquely |
 | **HTTP Request node for Send API** | n8n sends replies back through Facebook's Graph API |
-| **Incremental build (v1, v2, v3...)** | Start with working product lookup, add features one at a time |
+| **AI Agent system prompt restricts topics** | Prevents AI from inventing stock levels, prices, or order statuses |
+| **Incremental build (v1 → v2 → v3)** | Start simple, add complexity gradually, always have a working backup |
 
 ---
 
 ## Important Notes
 
-- This repository contains planning documents AND an importable workflow JSON
+- This repository contains planning documents AND importable workflow JSONs (v1 and v2)
 - **No API keys, passwords, or tokens are stored in this repo** — all credentials go inside n8n
-- The JSON file uses placeholder values (`CHANGE_ME_VERIFY_TOKEN`, `REPLACE_WITH_YOUR_CREDENTIAL_ID`)
+- JSON files use placeholder values (`CHANGE_ME_VERIFY_TOKEN`, `REPLACE_WITH_YOUR_CREDENTIAL_ID`)
 - All data is stored in YOUR Google Sheets (you control everything)
 - The workflow requires n8n to have a **public HTTPS URL** (Meta won't send to localhost)
+- v1 JSON is kept as a backup — do not delete it
 
 ---
 
@@ -156,6 +170,9 @@ See `google-sheets-structure.md` for the complete column list, examples, and set
 | **Variant** | A specific version of a product (e.g., "Black T-Shirt, Size M" is one variant) |
 | **SKU** | Stock Keeping Unit — a unique code for each product variant |
 | **Handoff** | When the bot transfers the conversation to a real human |
+| **AI Agent** | An n8n node that uses an AI model (like GPT) to generate responses |
+| **Chat Model** | The AI model connected to the AI Agent (e.g., gpt-4o-mini) |
+| **Hybrid routing** | Checking rules/sheets first, using AI only as a last resort |
 | **Google Sheets Tab** | A separate sheet within your spreadsheet (like pages in a book) |
 
 ---

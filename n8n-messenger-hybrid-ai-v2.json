@@ -1,0 +1,324 @@
+{
+  "name": "Messenger Hybrid AI v2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "get-webhook-v2",
+      "name": "GET Webhook (Verify)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 160],
+      "webhookId": "messenger-get-verify-v2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-mode",
+              "leftValue": "={{ $json.query['hub.mode'] }}",
+              "rightValue": "subscribe",
+              "operator": { "type": "string", "operation": "equals" }
+            },
+            {
+              "id": "cond-token",
+              "leftValue": "={{ $json.query['hub.verify_token'] }}",
+              "rightValue": "CHANGE_ME_VERIFY_TOKEN",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "verify-check-v2",
+      "name": "Verify Token Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 160]
+    },
+
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('GET Webhook (Verify)').item.json.query['hub.challenge'] }}",
+        "options": { "responseCode": 200, "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "text/plain" }] } }
+      },
+      "id": "respond-challenge-v2",
+      "name": "Respond with Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 80]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Forbidden",
+        "options": { "responseCode": 403 }
+      },
+      "id": "respond-403-v2",
+      "name": "Respond 403 Forbidden",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 240]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "post-webhook-v2",
+      "name": "POST Webhook (Messages)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 520],
+      "webhookId": "messenger-post-messages-v2"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "EVENT_RECEIVED",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-200-v2",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [440, 520]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Extract messaging event from Meta webhook payload\nconst body = $input.first().json.body;\nconst entry = body?.entry?.[0];\nconst messaging = entry?.messaging?.[0];\n\nif (!messaging) return [{ json: { skip: true, reason: 'no_messaging_event' } }];\nif (messaging.delivery || messaging.read) return [{ json: { skip: true, reason: 'delivery_or_read_event' } }];\nif (messaging.message?.is_echo) return [{ json: { skip: true, reason: 'echo_message' } }];\nif (!messaging.message?.text) return [{ json: { skip: true, reason: 'no_text_message' } }];\n\nreturn [{ json: { skip: false, senderPsid: messaging.sender.id, messageText: messaging.message.text, timestamp: messaging.timestamp } }];"
+      },
+      "id": "extract-message-v2",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 520]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-skip", "leftValue": "={{ $json.skip }}", "rightValue": "={{false}}", "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid-v2",
+      "name": "Is Valid Text Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 520]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// HYBRID ROUTER: Checks message against static rules FIRST to save AI cost.\n// Only falls through to AI if no confident answer can be given from rules/sheets.\n\nconst msg = $input.first().json.messageText;\nconst psid = $input.first().json.senderPsid;\nconst normalized = msg.toLowerCase().trim().replace(/[^a-z0-9\\s]/g, '');\nconst words = normalized.split(/\\s+/);\n\n// --- BRANCH 1: Static Direct Replies (NO AI COST) ---\nconst greetings = ['hi','hello','hey','hola','assalamualaikum','salam','yo','sup'];\nconst thanks = ['thanks','thank','thankyou','thx','jazakallah','shukria'];\nconst byes = ['bye','goodbye','see ya','later','seeya','cya'];\n\nif (words.length <= 3) {\n  if (words.some(w => greetings.includes(w))) {\n    return [{ json: { route: 'greeting', senderPsid: psid, replyText: 'Hello! Welcome to our store. I can help you find products, answer questions, or place an order. What are you looking for today?' } }];\n  }\n  if (words.some(w => thanks.includes(w))) {\n    return [{ json: { route: 'thanks', senderPsid: psid, replyText: 'You are welcome! Let me know if there is anything else I can help with.' } }];\n  }\n  if (words.some(w => byes.includes(w))) {\n    return [{ json: { route: 'bye', senderPsid: psid, replyText: 'Goodbye! Thanks for chatting with us. Come back anytime!' } }];\n  }\n}\n\n// --- BRANCH 6: Human Support Detection (NO AI COST) ---\nconst supportWords = ['human','agent','person','representative','manager','speak to','talk to','complaint','refund','fraud','overcharged','legal','lawyer'];\nconst angryPatterns = normalized === normalized.toUpperCase() && msg.length > 10;\nif (supportWords.some(w => normalized.includes(w)) || angryPatterns) {\n  return [{ json: { route: 'support', senderPsid: psid, messageText: msg } }];\n}\n\n// --- BRANCH 5: Order Tracking Detection (NO AI COST) ---\nconst trackWords = ['track','tracking','where is my order','order status','delivery status','has it shipped','my order','when will it arrive'];\nconst orderIdMatch = msg.match(/ORD-[\\w-]+/i);\nif (trackWords.some(w => normalized.includes(w)) || orderIdMatch) {\n  return [{ json: { route: 'tracking', senderPsid: psid, messageText: msg, orderId: orderIdMatch ? orderIdMatch[0].toUpperCase() : null } }];\n}\n\n// --- BRANCH 4: Order/Buy Intent Detection ---\nconst buyWords = ['buy','order','purchase','i want','ill take','add to cart','i need','id like'];\nif (buyWords.some(w => normalized.includes(w))) {\n  return [{ json: { route: 'order_intent', senderPsid: psid, messageText: msg } }];\n}\n\n// --- Remaining: FAQ or Product or AI Fallback ---\n// Pass forward for sheet-based checks\nreturn [{ json: { route: 'check_sheets', senderPsid: psid, messageText: msg, normalized: normalized } }];"
+      },
+      "id": "hybrid-router-v2",
+      "name": "Hybrid Router (Rules First)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 520],
+      "notes": "FAQ exact match = no AI cost\nProduct lookup = no AI cost\nTracking lookup = no AI cost\nAI Agent only runs on fallback/direct complex questions"
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "route-sheets", "leftValue": "={{ $json.route }}", "rightValue": "check_sheets", "operator": { "type": "string", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-sheets-v2",
+      "name": "Needs Sheet Lookup?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 520]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "__rl": true, "value": "", "mode": "list", "cachedResultName": "Clothing Brand Chatbot Database" },
+        "sheetName": { "__rl": true, "value": "", "mode": "list", "cachedResultName": "FAQ" },
+        "options": {}
+      },
+      "id": "read-faq-v2",
+      "name": "Read FAQ Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1540, 420],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "__rl": true, "value": "", "mode": "list", "cachedResultName": "Clothing Brand Chatbot Database" },
+        "sheetName": { "__rl": true, "value": "", "mode": "list", "cachedResultName": "Products" },
+        "options": {}
+      },
+      "id": "read-products-v2",
+      "name": "Read Products Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1540, 620],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Google Sheets account" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// FAQ + PRODUCT SEARCH (NO AI COST)\n// Tries FAQ first, then products. Only falls to AI if neither matches.\n\nconst routerData = $('Needs Sheet Lookup?').first().json;\nconst customerMsg = routerData.messageText;\nconst normalized = routerData.normalized;\nconst psid = routerData.senderPsid;\nconst words = normalized.split(/\\s+/).filter(w => w.length > 2).filter(w => !['the','and','for','are','this','that','with','have','show','want','your','what','does','come','any','can','you','please','hello','much','how','there'].includes(w));\n\n// --- TRY FAQ FIRST ---\nconst faqRows = $('Read FAQ Sheet').all().map(i => i.json);\nconst activeFaqs = faqRows.filter(f => String(f.Active).toUpperCase() === 'YES');\n\nlet bestFaq = null;\nlet bestFaqScore = 0;\n\nfor (const faq of activeFaqs) {\n  const faqKeywords = (faq.Keywords || '').toLowerCase().split(',').map(k => k.trim());\n  const questionWords = (faq.Question || '').toLowerCase().split(/\\s+/);\n  let score = 0;\n  for (const word of words) {\n    if (faqKeywords.some(k => k.includes(word) || word.includes(k))) score += 2;\n    if (questionWords.includes(word)) score += 1;\n  }\n  if (score > bestFaqScore) {\n    bestFaqScore = score;\n    bestFaq = faq;\n  }\n}\n\n// Strong FAQ match threshold: at least 3 points\nif (bestFaq && bestFaqScore >= 3) {\n  return [{ json: { route: 'faq_match', senderPsid: psid, replyText: bestFaq.Answer, faqId: bestFaq.FAQ_ID, aiUsed: false } }];\n}\n\n// --- TRY PRODUCTS ---\nconst productRows = $('Read Products Sheet').all().map(i => i.json);\nconst activeProducts = productRows.filter(p => String(p.Active).toUpperCase() === 'YES');\n\nconst scored = activeProducts.map(product => {\n  const searchable = [product.Product_Name||'', product.Category||'', product.Description||'', product.Size||'', product.Color||'', product.Search_Keywords||''].join(' ').toLowerCase();\n  let score = 0;\n  for (const term of words) { if (searchable.includes(term)) score++; }\n  return { ...product, score };\n}).filter(p => p.score > 0);\n\n// Group by Product_ID\nconst grouped = {};\nfor (const m of scored) {\n  const pid = m.Product_ID;\n  if (!grouped[pid]) { grouped[pid] = { Product_ID: pid, Product_Name: m.Product_Name, Price: m.Price, Currency: m.Currency||'USD', sizes: [], colors: [], inStock: 0, topScore: 0 }; }\n  if (m.score > grouped[pid].topScore) grouped[pid].topScore = m.score;\n  if (String(m.In_Stock).toUpperCase() === 'YES') {\n    grouped[pid].inStock++;\n    if (m.Size && !grouped[pid].sizes.includes(m.Size)) grouped[pid].sizes.push(m.Size);\n    if (m.Color && !grouped[pid].colors.includes(m.Color)) grouped[pid].colors.push(m.Color);\n  }\n}\n\nconst results = Object.values(grouped).sort((a,b) => b.topScore - a.topScore).slice(0, 5);\n\nif (results.length > 0) {\n  let reply = `I found ${results.length} product${results.length>1?'s':''} for you:\\n\\n`;\n  results.forEach((p, i) => {\n    reply += `${i+1}. ${p.Product_Name} — $${p.Price}\\n`;\n    if (p.sizes.length) reply += `   Sizes: ${p.sizes.join(', ')}\\n`;\n    if (p.colors.length) reply += `   Colors: ${p.colors.join(', ')}\\n`;\n    if (p.inStock === 0) reply += `   (Currently out of stock)\\n`;\n    reply += '\\n';\n  });\n  reply += 'Would you like to order any of these? Just tell me the product, size, and color!';\n  return [{ json: { route: 'product_match', senderPsid: psid, replyText: reply, matchCount: results.length, aiUsed: false } }];\n}\n\n// --- NO MATCH: Fall through to AI Agent ---\nif (words.length === 0) {\n  return [{ json: { route: 'ai_fallback', senderPsid: psid, messageText: customerMsg, replyText: \"I'd love to help! You can ask me about our products, shipping, returns, sizing, or place an order. What would you like to know?\", aiUsed: false } }];\n}\n\nreturn [{ json: { route: 'ai_fallback', senderPsid: psid, messageText: customerMsg, aiUsed: true } }];"
+      },
+      "id": "faq-product-search-v2",
+      "name": "FAQ + Product Search (No AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 520],
+      "notes": "FAQ exact match = no AI cost\nProduct lookup = no AI cost\nOnly passes to AI if neither FAQ nor Products match"
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "ai-needed", "leftValue": "={{ $json.aiUsed }}", "rightValue": "={{true}}", "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ai-needed-check-v2",
+      "name": "AI Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1980, 520]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.messageText }}",
+        "options": {
+          "systemMessage": "You are a friendly customer support assistant for a clothing brand. Your job is to help with general style advice, sizing guidance, and store-related questions. RULES: 1) Keep answers short (under 200 words). 2) Do NOT invent product names, prices, stock levels, or delivery dates. 3) Do NOT provide order status or tracking info — tell the customer to ask 'track my order ORD-XXXXX'. 4) Do NOT process refunds or complaints — tell the customer to say 'speak to a human'. 5) If you are unsure, recommend the customer speak with our support team. 6) Stay within clothing brand support topics only."
+        }
+      },
+      "id": "ai-agent-v2",
+      "name": "AI Agent (Fallback Only)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [2200, 440],
+      "notes": "AI Agent only runs on fallback/direct complex questions\nThis saves cost by handling FAQ, products, and tracking without AI"
+    },
+    {
+      "parameters": {
+        "options": {
+          "model": "gpt-4o-mini"
+        }
+      },
+      "id": "chat-model-v2",
+      "name": "Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [2220, 640],
+      "credentials": { "openAiApi": { "id": "REPLACE_WITH_YOUR_AI_CREDENTIAL_ID", "name": "OpenAI account" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Prepare final reply text for Messenger Send API\n// Handles all routes: greeting, thanks, bye, faq, product, tracking, support, ai\n\nconst data = $input.first().json;\nlet psid = data.senderPsid || '';\nlet replyText = data.replyText || data.output || data.text || '';\n\n// If coming from AI Agent, extract the output\nif (!replyText && data.response) {\n  replyText = data.response;\n}\nif (!replyText) {\n  replyText = 'I apologize, I could not process your request. Please try again or type \"speak to a human\" for support.';\n}\n\n// Truncate to Messenger 2000 char limit\nif (replyText.length > 1950) {\n  replyText = replyText.substring(0, 1947) + '...';\n}\n\nreturn [{ json: { senderPsid: psid, replyText: replyText } }];"
+      },
+      "id": "prepare-reply-v2",
+      "name": "Prepare Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2420, 520]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v18.0/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": { \"id\": \"{{ $json.senderPsid }}\" },\n  \"messaging_type\": \"RESPONSE\",\n  \"message\": { \"text\": {{ JSON.stringify($json.replyText) }} }\n}",
+        "options": {}
+      },
+      "id": "send-reply-v2",
+      "name": "Send Messenger Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2640, 520],
+      "credentials": { "httpHeaderAuth": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Facebook Page Access Token" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// TRACKING LOOKUP (NO AI COST)\n// Search Tracking tab by Order_ID or customer email\nconst data = $input.first().json;\nconst psid = data.senderPsid;\nconst orderId = data.orderId;\nconst msg = data.messageText;\n\n// For v2, reply with instructions since we don't have tracking data connected yet\nlet reply = '';\nif (orderId) {\n  reply = `I found your order reference: ${orderId}\\n\\nLet me check the status for you. Our team will update you shortly with tracking details.\\n\\nIf you need immediate help, type \"speak to a human\".`;\n} else {\n  reply = 'I can help you track your order! Please provide your order number (it looks like ORD-YYYYMMDD-XXX).\\n\\nExample: \"Track ORD-20250120-001\"';\n}\n\nreturn [{ json: { route: 'tracking', senderPsid: psid, replyText: reply, aiUsed: false } }];"
+      },
+      "id": "tracking-handler-v2",
+      "name": "Tracking Lookup (No AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 820],
+      "notes": "Tracking lookup = no AI cost"
+    },
+    {
+      "parameters": {
+        "jsCode": "// SUPPORT TICKET HANDLER (NO AI COST)\nconst data = $input.first().json;\nconst psid = data.senderPsid;\nconst msg = data.messageText || '';\n\nconst reply = `I understand you need help from our team. I have flagged your conversation for priority support.\\n\\nOur team will respond to you in this chat within 2-4 hours (business hours: Mon-Fri, 9 AM - 6 PM).\\n\\nIf urgent, you can also email: support@yourbrand.com\\n\\nIs there anything else I can help with while you wait?`;\n\nreturn [{ json: { route: 'support', senderPsid: psid, replyText: reply, aiUsed: false } }];"
+      },
+      "id": "support-handler-v2",
+      "name": "Support Ticket Handler (No AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 960]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ORDER INTENT HANDLER\nconst data = $input.first().json;\nconst psid = data.senderPsid;\nconst msg = data.messageText || '';\n\nconst reply = `Great, I would love to help you place an order!\\n\\nTo create your order, I need:\\n1. Which product? (e.g., Classic Black T-Shirt)\\n2. What size?\\n3. What color?\\n4. Your name and email\\n5. Shipping address\\n\\nWhich product are you interested in? You can also say \"show me t-shirts\" to browse first.`;\n\nreturn [{ json: { route: 'order_intent', senderPsid: psid, replyText: reply, aiUsed: false } }];"
+      },
+      "id": "order-handler-v2",
+      "name": "Order Intent Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 1100]
+    }
+  ],
+
+  "connections": {
+    "GET Webhook (Verify)": { "main": [[{ "node": "Verify Token Check", "type": "main", "index": 0 }]] },
+    "Verify Token Check": { "main": [[{ "node": "Respond with Challenge", "type": "main", "index": 0 }], [{ "node": "Respond 403 Forbidden", "type": "main", "index": 0 }]] },
+    "POST Webhook (Messages)": { "main": [[{ "node": "Respond 200 OK", "type": "main", "index": 0 }, { "node": "Extract Message Data", "type": "main", "index": 0 }]] },
+    "Extract Message Data": { "main": [[{ "node": "Is Valid Text Message?", "type": "main", "index": 0 }]] },
+    "Is Valid Text Message?": { "main": [[{ "node": "Hybrid Router (Rules First)", "type": "main", "index": 0 }], []] },
+    "Hybrid Router (Rules First)": { "main": [[{ "node": "Needs Sheet Lookup?", "type": "main", "index": 0 }]] },
+    "Needs Sheet Lookup?": { "main": [[{ "node": "Read FAQ Sheet", "type": "main", "index": 0 }, { "node": "Read Products Sheet", "type": "main", "index": 0 }], [{ "node": "Prepare Reply", "type": "main", "index": 0 }]] },
+    "Read FAQ Sheet": { "main": [[{ "node": "FAQ + Product Search (No AI)", "type": "main", "index": 0 }]] },
+    "Read Products Sheet": { "main": [[{ "node": "FAQ + Product Search (No AI)", "type": "main", "index": 0 }]] },
+    "FAQ + Product Search (No AI)": { "main": [[{ "node": "AI Needed?", "type": "main", "index": 0 }]] },
+    "AI Needed?": { "main": [[{ "node": "AI Agent (Fallback Only)", "type": "main", "index": 0 }], [{ "node": "Prepare Reply", "type": "main", "index": 0 }]] },
+    "AI Agent (Fallback Only)": { "main": [[{ "node": "Prepare Reply", "type": "main", "index": 0 }]] },
+    "Prepare Reply": { "main": [[{ "node": "Send Messenger Reply", "type": "main", "index": 0 }]] },
+    "Tracking Lookup (No AI)": { "main": [[{ "node": "Prepare Reply", "type": "main", "index": 0 }]] },
+    "Support Ticket Handler (No AI)": { "main": [[{ "node": "Prepare Reply", "type": "main", "index": 0 }]] },
+    "Order Intent Handler": { "main": [[{ "node": "Prepare Reply", "type": "main", "index": 0 }]] }
+  },
+
+  "pinData": {},
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2025-05-20T00:00:00.000Z",
+  "versionId": "2"
+}
