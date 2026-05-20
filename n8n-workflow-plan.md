@@ -29,24 +29,28 @@ Here is the flow from start to finish:
 Customer sends message
         |
         v
-[1. Chat Trigger] - Receives the message
+[1. Chat Trigger] ─── Receives the message
         |
         v
-[2. Message Classifier] - Decides what type of message it is
+[2. Identify Customer] ─── Check if returning customer (Customers tab)
         |
-        +--> Simple greeting/thanks --> [3. Direct Reply]
+        v
+[3. Message Classifier] ─── Decides what type of message it is
         |
-        +--> Product question -------> [4. Product Lookup] --> [5. Format & Reply]
+        ├──> greeting ──────────> [4. Direct Reply]
         |
-        +--> FAQ question -----------> [6. FAQ Lookup] --> [7. Format & Reply]
+        ├──> product_inquiry ──> [5. Product Search] ──> [6. Format Product Reply]
         |
-        +--> Wants to order ---------> [8. Collect Order Info] --> [9. Save Order] --> [10. Confirm Reply]
+        ├──> faq ──────────────> [7. FAQ Search] ──> [8. Format FAQ Reply]
         |
-        +--> Order tracking ---------> [11. Tracking Lookup] --> [12. Format & Reply]
+        ├──> order_create ─────> [9. Collect Order Info] ──> [10. Validate Variant]
+        |                              ──> [11. Save Order] ──> [12. Confirm Reply]
         |
-        +--> Needs human help -------> [13. Create Ticket] --> [14. Handoff Reply]
+        ├──> order_track ──────> [13. Tracking Lookup] ──> [14. Format Tracking Reply]
         |
-        +--> Unknown/unclear --------> [15. Fallback Reply]
+        ├──> human_support ────> [15. Create Support Ticket] ──> [16. Handoff Reply]
+        |
+        └──> unknown ──────────> [17. Fallback Reply]
 ```
 
 ---
@@ -60,6 +64,7 @@ Customer sends message
 | **Node Type** | Chat Trigger (or Webhook) |
 | **Purpose** | Receives incoming customer messages |
 | **What It Does** | Starts the workflow every time a customer sends a message |
+| **Output Data** | Message text, sender ID (Chat_User_ID), channel name, timestamp |
 
 **Beginner Tip:** This is always the FIRST node. Later, you will replace or connect this to WhatsApp, Messenger, or your website widget.
 
@@ -67,336 +72,566 @@ For initial testing, use n8n's built-in **Chat Trigger** node which gives you a 
 
 ---
 
-### Node 2: Message Classifier (AI or IF/Switch Node)
+### Node 2: Identify Customer
+
+| Setting | Value |
+|---------|-------|
+| **Node Type** | Google Sheets — Search Rows |
+| **Purpose** | Check if this person has messaged before |
+| **What It Does** | Searches the Customers tab by Chat_User_ID |
+
+**Configuration:**
+- Spreadsheet: Your "Clothing Brand Chatbot Database"
+- Sheet/Tab: Customers
+- Search Column: Chat_User_ID
+- Search Value: The sender ID from the Chat Trigger
+
+**If customer found:**
+- Load their Customer_ID, Customer_Name, Total_Orders, Total_Spent
+- Update Last_Contact_Date and Last_Message_Date
+- Use their name in responses ("Hi Sarah!")
+
+**If customer NOT found:**
+- Continue without personalization (use "Hi there!")
+- A new Customers row will be created later during order or support flows
+
+**Why this node exists:** Returning customers get a personalized experience, and you can identify VIPs (high Total_Orders or Total_Spent).
+
+---
+
+### Node 3: Message Classifier
 
 | Setting | Value |
 |---------|-------|
 | **Node Type** | AI Agent node OR Switch node |
 | **Purpose** | Reads the customer message and decides which branch to take |
-| **What It Does** | Categorizes the message into one of 6 types |
+| **What It Does** | Categorizes the message into one of 7 types |
 
-**Option A - Using AI (Recommended):**
-Use an AI node (like OpenAI or a basic AI Agent) with a prompt that classifies messages into categories:
-- `greeting` - Simple hello/thanks
-- `product_inquiry` - Asking about products
-- `faq` - General questions about policies
-- `order_create` - Wants to buy something
-- `order_track` - Asking about an existing order
-- `human_support` - Wants to talk to a person or is frustrated
+**Option A — Using AI (Recommended for accuracy):**
 
-**Option B - Using Switch Node (No AI needed):**
-Use keyword matching with a Switch node to check if the message contains specific words. (See `chatbot-branching-logic.md` for the keyword lists.)
+Use an AI node (like OpenAI or n8n's built-in AI) with this classification prompt:
+
+```
+Classify the following customer message into exactly one category.
+Return ONLY the category name, nothing else.
+
+Categories:
+- greeting (simple hi, thanks, bye, ok)
+- product_inquiry (asking about products, browsing, availability, sizes, colors, price)
+- faq (questions about shipping, returns, sizing policy, payment methods, discounts)
+- order_create (wants to buy/order something, add to cart, purchase)
+- order_track (asking about order status, delivery, tracking, where is my order)
+- human_support (wants a real person, is frustrated, complex issue, complaint)
+- unknown (cannot determine intent)
+
+Customer message: "{customer_message}"
+```
+
+**Option B — Using Switch Node (No AI needed, free):**
+
+Use keyword matching with a Switch node. Check conditions in this priority order:
+1. Contains "ORD-" or "track" or "where is my order" → `order_track`
+2. Contains "buy" or "order" or "purchase" or "I want" or "I'll take" → `order_create`
+3. Contains "human" or "person" or "agent" or angry language → `human_support`
+4. Contains product words (t-shirt, jeans, hoodie, etc.) or "show me" or "in stock" → `product_inquiry`
+5. Contains FAQ words (shipping, return, size guide, payment) → `faq`
+6. Contains greetings (hi, hello, thanks, bye) → `greeting`
+7. Default → `unknown`
 
 ---
 
-### Node 3: Direct Reply
+### Node 4: Direct Reply
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Respond to Chat (or Send Message) |
+| **Node Type** | Respond to Chat |
 | **Purpose** | Replies to simple greetings and pleasantries |
-| **What It Does** | Sends a friendly response without needing to look anything up |
+| **What It Does** | Sends a friendly response without needing any data lookup |
+
+**Personalization:** If Node 2 found the customer, use their name:
+- Known customer: "Hi Sarah! Welcome back. How can I help you today?"
+- Unknown customer: "Hello! Welcome to [Brand Name]. How can I help you today?"
 
 **Example Responses:**
-- "Hi" → "Hello! Welcome to [Brand Name]! How can I help you today? I can help with products, orders, tracking, or answer questions."
+- "Hi" → "Hello! Welcome to [Brand Name]! I can help you with: browsing products, answering questions, placing orders, or tracking deliveries. What would you like to do?"
 - "Thanks" → "You're welcome! Is there anything else I can help you with?"
 - "Bye" → "Goodbye! Have a great day. Come back anytime!"
 
 ---
 
-### Node 4: Product Lookup
+### Node 5: Product Search
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Search Rows |
-| **Purpose** | Searches the Products tab for matching items |
-| **What It Does** | Looks for products matching the customer's request |
+| **Node Type** | Google Sheets — Search Rows |
+| **Purpose** | Searches the Products tab for matching variants |
+| **What It Does** | Finds products matching the customer's request by category, name, color, size, or keywords |
 
 **Configuration:**
 - Spreadsheet: Your "Clothing Brand Chatbot Database"
 - Sheet/Tab: Products
-- Search Column: Product_Name, Category, Colors_Available, or Description
-- Search Value: Keywords extracted from the customer message
+- Filter: Active = "YES" (never show inactive products)
+- Search Columns: Product_Name, Category, Color, Size, Search_Keywords
 
-**What to search for:**
-- If customer says "black t-shirt" → search for "black" in Colors_Available AND "t-shirt" in Category
-- If customer says "jeans" → search for "jeans" in Category or Product_Name
+**Search Logic:**
 
----
+| Customer Says | Search Strategy |
+|--------------|----------------|
+| "Show me t-shirts" | Category = "T-Shirts" AND Active = "YES" |
+| "Black hoodies in large" | Category = "Hoodies" AND Color = "Black" AND Size = "L" AND Active = "YES" |
+| "What do you have under $40?" | Price < 40 AND Active = "YES" AND In_Stock = "YES" |
+| "Do you have the classic tee in medium?" | Product_Name contains "Classic" AND Size = "M" |
 
-### Node 5: Format Product Reply
+**Important:** Since each row is a variant, you may get multiple rows for the same product. Group results by Product_ID so you show each product once with all its available sizes/colors.
 
-| Setting | Value |
-|---------|-------|
-| **Node Type** | Set node + Respond to Chat |
-| **Purpose** | Formats the search results into a nice message |
-| **What It Does** | Takes raw spreadsheet data and creates a readable reply |
-
-**Example Reply Format:**
-```
-I found these products for you:
-
-1. Classic Black T-Shirt
-   Price: $29.99
-   Sizes: S, M, L, XL
-   Colors: Black, White, Navy
-   In Stock: Yes
-
-2. Premium Black T-Shirt V-Neck
-   Price: $34.99
-   Sizes: S, M, L, XL
-   Colors: Black, Charcoal
-   In Stock: Yes
-
-Would you like to order any of these? Just tell me which one, your size, and color!
-```
-
-**If no products found:**
-```
-I could not find products matching your request. Could you try different keywords? Or I can show you our categories: T-Shirts, Jeans, Hoodies, Dresses, Accessories.
-```
+**Output:** List of matching product variants (or empty if nothing matches).
 
 ---
 
-### Node 6: FAQ Lookup
+### Node 6: Format Product Reply
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Search Rows |
+| **Node Type** | Set node + IF node + Respond to Chat |
+| **Purpose** | Formats search results into a customer-friendly message |
+| **What It Does** | Groups variants by product, shows availability, sends reply |
+
+**Logic:**
+
+1. **Group results by Product_ID** (so "Classic Black T-Shirt" shows once, not 12 times)
+2. **For each product, list:** Name, Price, available sizes, available colors, stock status
+3. **Show In_Stock variants only** (skip variants where In_Stock = "NO")
+
+**If products found (1-5 unique products):**
+```
+I found [X] product(s) matching your request:
+
+1. Classic Black T-Shirt — $29.99
+   Sizes in stock: S, M, L
+   Colors available: Black, White, Navy
+   
+2. Premium V-Neck Tee — $34.99
+   Sizes in stock: S, M, L, XL
+   Colors available: Black, Charcoal
+
+Would you like to order any of these? Just tell me the product, size, and color!
+```
+
+**If products found (more than 5 unique products):**
+```
+I found [X] products! Here are the top 5:
+[show 5 products]
+
+Would you like me to narrow it down? Tell me your preferred size, color, or price range.
+```
+
+**If NO products found:**
+```
+I couldn't find any products matching "[search term]" that are currently in stock.
+
+Our available categories are:
+- T-Shirts
+- Jeans  
+- Hoodies
+- Dresses
+- Accessories
+
+Would you like to browse one of these, or can I help with something else?
+```
+
+**If specific variant is out of stock:**
+```
+I found the Classic Black T-Shirt, but size M in Black is currently out of stock (Stock_Qty: 0).
+
+Available alternatives:
+- Size M in White (15 in stock)
+- Size M in Navy (8 in stock)
+- Size L in Black (8 in stock)
+
+Would you like one of these instead, or shall I notify you when it's back?
+```
+
+---
+
+### Node 7: FAQ Search
+
+| Setting | Value |
+|---------|-------|
+| **Node Type** | Google Sheets — Search Rows |
 | **Purpose** | Searches the FAQ tab for matching answers |
 | **What It Does** | Finds the best FAQ answer based on keywords |
 
 **Configuration:**
 - Spreadsheet: Your "Clothing Brand Chatbot Database"
 - Sheet/Tab: FAQ
-- Search Column: Keywords (Column D)
-- Search Value: Words from the customer's message
+- Filter: Active = "YES" (never show inactive FAQs)
+- Search Column: Keywords
+- Sort by: Sort_Order (ascending — lower numbers first)
 
-**How matching works:**
-The customer message is compared against the Keywords column. The FAQ entry with the most matching keywords wins.
+**Matching Logic:**
+1. Convert customer message to lowercase
+2. Extract meaningful words (remove "the", "a", "do", "you", "is", etc.)
+3. Compare extracted words against the Keywords column in each FAQ row
+4. Count how many keywords match each FAQ entry
+5. Return the FAQ entry with the MOST matches
+6. If multiple entries tie, return the one with the lowest Sort_Order
 
 ---
 
-### Node 7: Format FAQ Reply
+### Node 8: Format FAQ Reply
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Set node + Respond to Chat |
-| **Purpose** | Sends the FAQ answer back to the customer |
-| **What It Does** | Returns the answer from the FAQ tab in a friendly format |
+| **Node Type** | IF node + Respond to Chat |
+| **Purpose** | Sends the FAQ answer or a helpful fallback |
 
-**Example Reply:**
+**If FAQ match found:**
 ```
 Great question! Here's what I found:
 
-Q: How long does shipping take?
-A: Standard shipping takes 5-7 business days. Express shipping takes 2-3 business days.
+[Answer from FAQ tab]
 
-Does this answer your question? If not, I can connect you with our team!
+Does this answer your question? If not, I can connect you with our team.
+```
+
+**If NO FAQ match found:**
+```
+I don't have a specific answer for that in my knowledge base.
+
+Would you like me to:
+1. Connect you with our support team?
+2. Try rephrasing your question?
+
+I can answer questions about: shipping, returns, sizing, payments, and discounts.
 ```
 
 ---
 
-### Node 8: Collect Order Information
+### Node 9: Collect Order Information
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | AI Agent or Set node (with memory/conversation) |
-| **Purpose** | Gathers all details needed to create an order |
-| **What It Does** | Asks the customer for: product, size, color, name, email |
+| **Node Type** | AI Agent with memory OR multi-step Set nodes |
+| **Purpose** | Gathers all details needed to create a complete order |
+| **What It Does** | Asks the customer for product, size, color, shipping address, payment method |
 
-**Information needed for an order:**
-1. Which product (Product_ID or name)
-2. Size
-3. Color
-4. Quantity
-5. Customer name
-6. Customer email
-7. Any special notes
+**Information to collect (in order):**
 
-**Conversation flow:**
+| Step | Info Needed | Maps To Column | Required? |
+|------|------------|----------------|-----------|
+| 1 | Which product | Product_ID, Product_Name | Yes |
+| 2 | What size | Size | Yes |
+| 3 | What color | Color | Yes |
+| 4 | How many | Quantity | Yes (default: 1) |
+| 5 | Customer name | Customer_Name | Yes |
+| 6 | Customer email | Customer_Email | Yes |
+| 7 | Customer phone | Customer_Phone | Optional |
+| 8 | Shipping address | Shipping_Address, City, Country | Yes |
+| 9 | Delivery method | Delivery_Method | Yes (default: Standard) |
+| 10 | Payment method | Payment_Method | Yes |
+| 11 | Special notes | Notes | Optional |
+
+**Conversation Example:**
 ```
-Customer: "I want to order the black t-shirt"
-Bot: "Great choice! What size would you like? (S, M, L, XL)"
-Customer: "Large"
-Bot: "Size L, got it! Could I get your name and email to create the order?"
-Customer: "Sarah Johnson, sarah@example.com"
-Bot: "Let me confirm your order..."
+Customer: "I want to buy the Classic Black T-Shirt in size M"
+Bot:      "Great choice! Classic Black T-Shirt, Size M, Black — $29.99.
+           How many would you like?"
+Customer: "Just 1"
+Bot:      "Got it! To complete your order I need:
+           - Your full name
+           - Email address
+           - Shipping address (street, city, country)"
+Customer: "Sarah Johnson, sarah@email.com, 123 Main St, New York, US"
+Bot:      "Almost done! How would you like to pay?
+           Options: Credit Card, PayPal, Apple Pay, Bank Transfer"
+Customer: "PayPal"
+Bot:      "And delivery preference? Standard (5-7 days, $5.99) or Express (2-3 days, $12.99)?"
+Customer: "Standard"
+Bot:      "[Shows full order summary for confirmation]"
 ```
 
 ---
 
-### Node 9: Save Order to Google Sheets
+### Node 10: Validate Variant
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Append Row |
-| **Purpose** | Saves the new order to the Orders tab |
-| **What It Does** | Creates a new row with all order details |
+| **Node Type** | Google Sheets — Search Rows + IF node |
+| **Purpose** | Verify the exact variant exists and is in stock before saving |
+| **What It Does** | Searches Products tab for the specific Variant_SKU |
+
+**Checks to perform:**
+
+| Check | How | If Fails |
+|-------|-----|----------|
+| Product exists | Search by Product_ID, Active = "YES" | "I can't find that product. Want to see what we have?" |
+| Variant exists | Search by Product_ID + Size + Color | "That size/color combo isn't available. Here's what we have: [list]" |
+| Variant in stock | Check In_Stock = "YES" AND Stock_Qty > 0 | "Sorry, that's out of stock. Alternatives: [list other variants]" |
+| Enough quantity | Stock_Qty >= requested Quantity | "We only have [X] left in that variant. Would you like [X] instead?" |
+
+**On success:** Retrieve the Variant_SKU and Unit_Price, then proceed to Node 11.
+
+---
+
+### Node 11: Save Order to Google Sheets
+
+| Setting | Value |
+|---------|-------|
+| **Node Type** | Google Sheets — Append Row |
+| **Purpose** | Saves the completed order to the Orders tab |
+| **What It Does** | Creates a new row with all 25 order fields |
 
 **Configuration:**
 - Spreadsheet: Your "Clothing Brand Chatbot Database"
 - Sheet/Tab: Orders
 - Operation: Append (add new row at the bottom)
 
-**Data to save:**
-- Generate Order_ID (format: ORD-YYYYMMDD-XXX)
-- Customer_Name: from conversation
-- Customer_Email: from conversation
-- Product_ID: from product lookup
-- Product_Name: from product lookup
-- Size: from conversation
-- Color: from conversation
-- Quantity: from conversation
-- Total_Price: Price x Quantity
-- Order_Status: "Draft"
-- Order_Date: Current date/time
-- Notes: Any special requests
+**Data mapping:**
+
+| Column | Where The Data Comes From |
+|--------|--------------------------|
+| Order_ID | Generate: ORD-YYYYMMDD-XXX |
+| Customer_ID | From Node 2 (if returning customer) or generate new CUST-XXX |
+| Customer_Name | Collected in Node 9 |
+| Customer_Email | Collected in Node 9 |
+| Customer_Phone | Collected in Node 9 (or blank) |
+| Product_ID | From Node 10 validation |
+| Variant_SKU | From Node 10 validation |
+| Product_Name | From Node 10 validation |
+| Size | Collected in Node 9 |
+| Color | Collected in Node 9 |
+| Quantity | Collected in Node 9 |
+| Unit_Price | From Node 10 (Products tab) |
+| Total_Price | Unit_Price × Quantity |
+| Currency | From Products tab |
+| Shipping_Address | Collected in Node 9 |
+| City | Collected in Node 9 |
+| Country | Collected in Node 9 |
+| Payment_Method | Collected in Node 9 |
+| Payment_Status | "Pending" (always starts as pending) |
+| Delivery_Method | Collected in Node 9 |
+| Order_Status | "Draft" (always starts as draft) |
+| Channel | From Chat Trigger (WhatsApp, Website, etc.) |
+| Created_Date | Current date/time |
+| Updated_Date | Current date/time |
+| Notes | Collected in Node 9 (or blank) |
+
+**Also do these updates:**
+- If new customer: Append a row to the **Customers** tab with their info
+- If existing customer: Update **Total_Orders** (+1) and **Last_Contact_Date** in Customers tab
 
 ---
 
-### Node 10: Order Confirmation Reply
+### Node 12: Order Confirmation Reply
 
 | Setting | Value |
 |---------|-------|
 | **Node Type** | Respond to Chat |
-| **Purpose** | Confirms the order was created |
-| **What It Does** | Sends order summary back to customer |
+| **Purpose** | Confirms the order was created successfully |
+| **What It Does** | Sends a complete order summary with next steps |
 
-**Example Reply:**
+**Reply template:**
 ```
 Your order has been created! Here's your summary:
 
 Order Number: ORD-20250120-001
-Product: Classic Black T-Shirt (Size L, Black)
+Product: Classic Black T-Shirt
+Variant: Size M, Black
 Quantity: 1
+Unit Price: $29.99
 Total: $29.99
-Status: Draft (our team will confirm shortly)
+Delivery: Standard (5-7 business days)
+Payment: PayPal (pending)
 
-You will receive a confirmation email at sarah@example.com.
+Shipping to: 123 Main St, New York, US
+
+Status: Draft — our team will confirm and send payment instructions shortly.
+You'll receive updates at sarah@example.com.
+
 Is there anything else I can help with?
 ```
 
 ---
 
-### Node 11: Tracking Lookup
+### Node 13: Tracking Lookup
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Search Rows |
+| **Node Type** | Google Sheets — Search Rows |
 | **Purpose** | Finds shipping status for an order |
-| **What It Does** | Searches the Tracking tab by Order_ID or email |
+| **What It Does** | Searches the Tracking tab by Order_ID or Customer_Email |
 
 **Configuration:**
 - Spreadsheet: Your "Clothing Brand Chatbot Database"
 - Sheet/Tab: Tracking
-- Search Column: Order_ID or Customer_Email
-- Search Value: Order number or email from customer message
+- Search Column: Order_ID (primary) or Customer_Email (fallback)
+
+**Lookup flow:**
+1. Check if message contains an order number (pattern: ORD-XXXXXXXX-XXX)
+2. If yes → search Tracking tab by Order_ID
+3. If no → check if we know the customer from Node 2
+4. If known customer → search by their email
+5. If unknown → ask: "Could you provide your order number (starts with ORD-) or email address?"
+
+**If order not in Tracking tab:** Also check the Orders tab — the order may not have shipped yet. Return the Order_Status instead.
 
 ---
 
-### Node 12: Format Tracking Reply
+### Node 14: Format Tracking Reply
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Set node + Respond to Chat |
-| **Purpose** | Sends tracking information to customer |
-| **What It Does** | Formats tracking data into a readable message |
+| **Node Type** | IF node + Set node + Respond to Chat |
+| **Purpose** | Sends tracking information or helpful alternatives |
 
-**Example Reply (order found):**
+**If tracking info found:**
 ```
-Here is the tracking info for order ORD-20250120-001:
+Here's the status for order ORD-20250120-001:
 
 Status: In Transit
 Carrier: UPS
 Tracking Number: 1Z999AA10123456784
 Shipped: January 21, 2025
 Estimated Delivery: January 26, 2025
+Last Updated: January 22, 2025
 
-Track your package here: [tracking URL]
+Track your package: https://www.ups.com/track?tracknum=1Z999AA10123456784
 
 Is there anything else I can help with?
 ```
 
-**Example Reply (order NOT found):**
+**If order exists but NOT shipped yet:**
 ```
-I could not find tracking information for that order. This could mean:
-- The order hasn't shipped yet
-- The order number might be incorrect
+I found your order ORD-20250120-001!
 
-Could you double-check your order number? It looks like: ORD-YYYYMMDD-XXX
-Or I can look it up by your email address. Would you like me to connect you with our team?
+Current Status: Processing
+Payment: Paid
+
+Your order hasn't shipped yet. Here's what the statuses mean:
+- Draft → Awaiting confirmation
+- Confirmed → Payment received, being prepared
+- Processing → Almost ready to ship!
+
+You'll get a notification with tracking info once it ships. Anything else I can help with?
+```
+
+**If order NOT found:**
+```
+I couldn't find an order with that number. This could mean:
+- The order number might have a typo (format: ORD-YYYYMMDD-XXX)
+- The order might be under a different email
+
+Would you like to:
+1. Try a different order number or email?
+2. Connect with our support team?
 ```
 
 ---
 
-### Node 13: Create Support Ticket
+### Node 15: Create Support Ticket
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Append Row |
-| **Purpose** | Creates a support ticket for human follow-up |
-| **What It Does** | Adds a new row to the Support Tickets tab |
+| **Node Type** | Google Sheets — Append Row |
+| **Purpose** | Creates a detailed support ticket for human follow-up |
+| **What It Does** | Adds a new row to the Support_Tickets tab with full context |
 
 **Configuration:**
 - Spreadsheet: Your "Clothing Brand Chatbot Database"
-- Sheet/Tab: Support Tickets
+- Sheet/Tab: Support_Tickets
 - Operation: Append
 
-**Data to save:**
-- Generate Ticket_ID (format: TKT-YYYYMMDD-XXX)
-- Customer_Name: from conversation
-- Customer_Email: from conversation
-- Channel: which platform they messaged from
-- Issue_Category: type of problem
-- Issue_Description: summary of what they said
-- Priority: based on rules (see chatbot-branching-logic.md)
-- Status: "Open"
-- Created_Date: Current date/time
+**Data mapping:**
+
+| Column | Where The Data Comes From |
+|--------|--------------------------|
+| Ticket_ID | Generate: TKT-YYYYMMDD-XXX |
+| Conversation_ID | From Chat Trigger (session/conversation ID) |
+| Customer_ID | From Node 2 (or blank if unknown) |
+| Customer_Name | From Node 2 or collected during handoff |
+| Customer_Email | From Node 2 or collected during handoff |
+| Customer_Phone | From Node 2 or collected during handoff |
+| Channel | From Chat Trigger |
+| Issue_Category | Detected from message (Order Issue, Product Question, Complaint, etc.) |
+| Issue_Description | Brief summary of what the customer needs |
+| Last_User_Message | The exact last message the customer sent (copy it verbatim) |
+| Bot_Summary | Auto-generated summary of the conversation so far |
+| Handoff_Reason | Why handoff is happening (customer_requested, bot_failed_3x, angry_customer, complex_issue, policy_exception) |
+| Priority | Based on rules (see below) |
+| Status | "Open" |
+| Created_Date | Current date/time |
+| Assigned_To | (blank — team will assign) |
+| Resolved_Date | (blank — not resolved yet) |
+| Resolution_Notes | (blank — not resolved yet) |
+
+**Priority assignment logic:**
+
+| Condition | Priority |
+|-----------|----------|
+| Angry language, ALL CAPS, profanity, mentions "legal" or "lawyer" | High |
+| Wrong item received, damaged item, payment/billing issue | High |
+| Exchange request, sizing issue, general complaint | Medium |
+| Bot failed to understand, customer prefers human, general question | Low |
+
+**Bot_Summary generation:** If using an AI node, ask it to summarize the conversation in 1-2 sentences. If not using AI, concatenate the last 3 customer messages.
 
 ---
 
-### Node 14: Human Handoff Reply
+### Node 16: Human Handoff Reply
 
 | Setting | Value |
 |---------|-------|
 | **Node Type** | Respond to Chat |
 | **Purpose** | Tells the customer a human will follow up |
-| **What It Does** | Confirms the ticket was created and sets expectations |
+| **What It Does** | Confirms the ticket and sets response time expectations |
 
-**Example Reply:**
+**Reply template:**
 ```
-I understand you'd like to speak with our team. I've created a support ticket for you.
+I understand you need help from our team. I've created a support ticket for you.
 
 Ticket Number: TKT-20250120-001
-Our team will reach out to you within 2-4 hours during business hours (Mon-Fri, 9 AM - 6 PM).
+Priority: [Medium]
+Issue: [Brief description]
 
-If it's urgent, you can also email us at support@yourbrand.com.
-Is there anything else I can help with in the meantime?
+Our team will reach out to you within [response time based on priority]:
+- High priority: Within 2 hours
+- Medium priority: Within 4 hours  
+- Low priority: Within 24 hours
+
+(Business hours: Mon-Fri, 9 AM - 6 PM)
+
+If urgent, you can also email: support@yourbrand.com
+
+Is there anything else I can help with while you wait?
 ```
 
 ---
 
-### Node 15: Fallback Reply
+### Node 17: Fallback Reply
 
 | Setting | Value |
 |---------|-------|
 | **Node Type** | Respond to Chat |
 | **Purpose** | Handles messages the bot does not understand |
-| **What It Does** | Asks the customer to rephrase or offers options |
+| **What It Does** | Offers a menu of options |
 
-**Example Reply:**
+**Reply:**
 ```
-I'm not sure I understood that correctly. Here's what I can help you with:
+I'm not sure I understood that. Here's what I can help with:
 
-1. Browse products - "Show me t-shirts" or "What do you have in black?"
-2. Answer questions - "What's your return policy?" or "Do you ship internationally?"
-3. Place an order - "I want to order..." or "I'd like to buy..."
-4. Track an order - "Where is my order ORD-XXXXX?" or "Track my order"
-5. Talk to a human - "I need help" or "Speak to someone"
+1. 🛍️ Products — "Show me t-shirts" or "What's in stock?"
+2. ❓ Questions — "What's your return policy?" or "Shipping info"
+3. 🛒 Place an order — "I want to buy..." 
+4. 📦 Track an order — "Where is my order ORD-XXXXX?"
+5. 💬 Talk to our team — "Connect me with support"
 
-Which would you like?
+Which of these can I help you with?
 ```
+
+**Fallback counter logic:**
+- First unknown message: Show menu above
+- Second unknown message in a row: Show menu + "If you'd prefer to speak with a person, just say 'human support'"
+- Third unknown message in a row: Automatically trigger Node 15 (Create Support Ticket) with Handoff_Reason = "bot_failed_3x"
 
 ---
 
@@ -404,50 +639,67 @@ Which would you like?
 
 | From Node | To Node | Condition |
 |-----------|---------|-----------|
-| Chat Trigger | Message Classifier | Always (every message) |
-| Message Classifier | Direct Reply | Category = greeting |
-| Message Classifier | Product Lookup | Category = product_inquiry |
-| Message Classifier | FAQ Lookup | Category = faq |
-| Message Classifier | Collect Order Info | Category = order_create |
-| Message Classifier | Tracking Lookup | Category = order_track |
-| Message Classifier | Create Support Ticket | Category = human_support |
-| Message Classifier | Fallback Reply | Category = unknown |
-| Product Lookup | Format Product Reply | Always |
-| FAQ Lookup | Format FAQ Reply | Always |
-| Collect Order Info | Save Order | When all info collected |
-| Save Order | Order Confirmation Reply | Always |
-| Tracking Lookup | Format Tracking Reply | Always |
-| Create Support Ticket | Human Handoff Reply | Always |
+| 1. Chat Trigger | 2. Identify Customer | Always (every message) |
+| 2. Identify Customer | 3. Message Classifier | Always |
+| 3. Message Classifier | 4. Direct Reply | Category = greeting |
+| 3. Message Classifier | 5. Product Search | Category = product_inquiry |
+| 3. Message Classifier | 7. FAQ Search | Category = faq |
+| 3. Message Classifier | 9. Collect Order Info | Category = order_create |
+| 3. Message Classifier | 13. Tracking Lookup | Category = order_track |
+| 3. Message Classifier | 15. Create Support Ticket | Category = human_support |
+| 3. Message Classifier | 17. Fallback Reply | Category = unknown |
+| 5. Product Search | 6. Format Product Reply | Always |
+| 7. FAQ Search | 8. Format FAQ Reply | Always |
+| 9. Collect Order Info | 10. Validate Variant | When all info collected |
+| 10. Validate Variant | 11. Save Order | Validation passes |
+| 10. Validate Variant | (back to 9) | Validation fails (ask again) |
+| 11. Save Order | 12. Order Confirmation Reply | Always |
+| 13. Tracking Lookup | 14. Format Tracking Reply | Always |
+| 15. Create Support Ticket | 16. Handoff Reply | Always |
 
 ---
 
-## Error Handling Nodes
-
-You should add these extra nodes to handle problems:
+## Error Handling
 
 ### Error: Google Sheets Connection Failed
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Error Trigger + Respond to Chat |
-| **Purpose** | Handles cases where Google Sheets cannot be reached |
+| **Where** | On every Google Sheets node |
+| **How** | Add an "Error" output connection from each Google Sheets node |
 | **Reply** | "I'm having trouble looking that up right now. Please try again in a moment, or I can connect you with our team." |
 
-### Error: No Results Found
+### Error: No Search Results
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | IF node (check if results are empty) |
-| **Purpose** | Handles cases where a search returns no results |
-| **Reply** | A helpful message suggesting alternatives (shown in node descriptions above) |
+| **Where** | After Nodes 5, 7, 13 (any search node) |
+| **How** | IF node checks if results array is empty |
+| **Reply** | A helpful message with alternatives (shown in node descriptions above) |
 
-### Error: Missing Information for Order
+### Error: Variant Out of Stock During Order
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | IF node (check if required fields are filled) |
-| **Purpose** | Makes sure all order details are collected before saving |
-| **Reply** | "I still need your [missing field] to complete the order. Could you provide that?" |
+| **Where** | Node 10 (Validate Variant) |
+| **How** | Check Stock_Qty >= requested Quantity |
+| **Reply** | "That variant is out of stock. Here are alternatives: [list other variants of same product]" |
+
+### Error: Invalid Data from Customer
+
+| Setting | Value |
+|---------|-------|
+| **Where** | Node 9 (Collect Order Info) |
+| **How** | Validate email format, ensure required fields are filled |
+| **Reply** | "That doesn't look quite right. Could you double-check your [email/address/etc.]?" |
+
+### Error: Fallback Loop (3 failures)
+
+| Setting | Value |
+|---------|-------|
+| **Where** | Node 17 (Fallback Reply) |
+| **How** | Counter tracks consecutive unknown messages |
+| **Action** | Auto-trigger Node 15 (Create Support Ticket) with Handoff_Reason = "bot_failed_3x" |
 
 ---
 
@@ -455,24 +707,48 @@ You should add these extra nodes to handle problems:
 
 | Credential | What For | How To Get It |
 |-----------|----------|---------------|
-| **Google Sheets OAuth2** | Reading/writing to your spreadsheet | In n8n, add a Google Sheets credential and follow the OAuth sign-in flow |
-| **AI Service (Optional)** | For the Message Classifier (if using AI) | Sign up for OpenAI or use n8n's built-in AI features |
+| **Google Sheets OAuth2** | Reading/writing to your spreadsheet | In n8n: Settings > Credentials > Add > Google Sheets OAuth2 > Sign in with Google |
+| **AI Service (Optional)** | For the Message Classifier and Bot_Summary generation | Sign up at OpenAI or use n8n's built-in AI features |
 
-**Note:** Do NOT store API keys in this repository. You will set up credentials directly inside n8n.
+**Note:** Do NOT store API keys in this repository. Set up credentials directly inside n8n.
 
 ---
 
-## Testing Plan
+## Data Flow Summary
 
-Before connecting to real customers, test each branch:
+Here is how data moves between Google Sheets tabs during the workflow:
 
-| Test | What To Send | Expected Result |
-|------|-------------|-----------------|
-| Greeting | "Hi" | Friendly welcome message |
-| Product search | "Show me black t-shirts" | Product list from Google Sheets |
-| FAQ | "What is your return policy?" | Return policy answer |
-| Order | "I want to buy the Classic Black T-Shirt in size M" | Order creation flow |
-| Tracking | "Where is order ORD-20250120-001?" | Tracking info |
-| Human handoff | "I want to speak to someone" | Support ticket created |
-| Unknown | "asdfghjkl" | Fallback with menu options |
-| Error | (disconnect Google Sheets temporarily) | Error message |
+| Action | Reads From | Writes To |
+|--------|-----------|-----------|
+| Identify customer | Customers | Customers (update dates) |
+| Product search | Products | — |
+| FAQ search | FAQ | — |
+| Create order | Products (validate) | Orders, Customers (update totals) |
+| Track order | Tracking, Orders | — |
+| Human handoff | Customers | Support_Tickets |
+
+---
+
+## Testing Checklist
+
+Before connecting to real customers, test each path:
+
+| # | Test | What To Send | Expected Result |
+|---|------|-------------|-----------------|
+| 1 | Greeting | "Hi" | Welcome message (personalized if known customer) |
+| 2 | Product found | "Show me black t-shirts" | Grouped product list with sizes/stock |
+| 3 | Product not found | "Show me purple sandals" | Not found + category list |
+| 4 | Specific variant | "Do you have the hoodie in large grey?" | Single variant result with stock qty |
+| 5 | Out of stock | Ask for a variant with Stock_Qty = 0 | Out of stock + alternatives |
+| 6 | FAQ found | "What's your return policy?" | Correct FAQ answer |
+| 7 | FAQ not found | "Do you do custom embroidery?" | No answer + options |
+| 8 | Order start | "I want to buy a Classic Black T-Shirt in M" | Starts order collection |
+| 9 | Order complete | Provide all details | Order saved, confirmation with all fields |
+| 10 | Order validation fail | Order a variant that is out of stock | Error + alternatives |
+| 11 | Tracking found | "Track order ORD-20250120-001" | Full tracking details |
+| 12 | Tracking not found | "Track order ORD-99999" | Not found + suggestions |
+| 13 | Human handoff | "Talk to a real person" | Ticket created + confirmation |
+| 14 | Angry handoff | "THIS IS TERRIBLE SERVICE!" | High priority ticket |
+| 15 | Fallback | "asdfghjkl" | Menu of options |
+| 16 | Fallback x3 | Three gibberish messages in a row | Auto-handoff to human |
+| 17 | Error | Disconnect Google Sheets temporarily | Graceful error message |
