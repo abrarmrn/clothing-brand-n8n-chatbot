@@ -1,0 +1,323 @@
+{
+  "name": "Messenger Product Lookup v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "get-webhook",
+      "name": "GET Webhook (Verify)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 160],
+      "webhookId": "messenger-get-verify"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-mode",
+              "leftValue": "={{ $json.query['hub.mode'] }}",
+              "rightValue": "subscribe",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "condition-token",
+              "leftValue": "={{ $json.query['hub.verify_token'] }}",
+              "rightValue": "CHANGE_ME_VERIFY_TOKEN",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "verify-check",
+      "name": "Verify Token Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('GET Webhook (Verify)').item.json.query['hub.challenge'] }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-challenge",
+      "name": "Respond with Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 80]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Forbidden",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "respond-403",
+      "name": "Respond 403 Forbidden",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 240]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "post-webhook",
+      "name": "POST Webhook (Messages)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 480],
+      "webhookId": "messenger-post-messages"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "EVENT_RECEIVED",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-200",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [440, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract messaging event from Meta webhook payload\nconst body = $input.first().json.body;\n\n// Safely navigate the nested structure\nconst entry = body?.entry?.[0];\nconst messaging = entry?.messaging?.[0];\n\nif (!messaging) {\n  return [{ json: { skip: true, reason: 'no_messaging_event' } }];\n}\n\n// Skip non-message events (delivery, read receipts, echoes)\nif (messaging.delivery || messaging.read) {\n  return [{ json: { skip: true, reason: 'delivery_or_read_event' } }];\n}\n\n// Skip echo messages (messages sent BY the page)\nif (messaging.message?.is_echo) {\n  return [{ json: { skip: true, reason: 'echo_message' } }];\n}\n\n// Skip if no text message\nif (!messaging.message?.text) {\n  return [{ json: { skip: true, reason: 'no_text_message' } }];\n}\n\n// Extract sender PSID and message text\nconst senderPsid = messaging.sender.id;\nconst messageText = messaging.message.text;\n\nreturn [{\n  json: {\n    skip: false,\n    senderPsid: senderPsid,\n    messageText: messageText,\n    timestamp: messaging.timestamp\n  }\n}];"
+      },
+      "id": "extract-message",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 480]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": "={{false}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-skip",
+      "name": "Is Valid Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 480]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Clothing Brand Chatbot Database"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Products"
+        },
+        "options": {}
+      },
+      "id": "read-products",
+      "name": "Read Products Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 400],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the customer message from the extract step\nconst extractData = $('Is Valid Message?').first().json;\nconst customerMessage = extractData.messageText.toLowerCase();\nconst senderPsid = extractData.senderPsid;\n\n// Get all products from Google Sheets\nconst products = $input.all().map(item => item.json);\n\n// Filter: only Active products\nconst activeProducts = products.filter(p => \n  String(p.Active).toUpperCase() === 'YES'\n);\n\n// Search for matching products\nconst searchTerms = customerMessage\n  .replace(/[^a-z0-9\\s]/g, '')\n  .split(/\\s+/)\n  .filter(word => word.length > 2)\n  .filter(word => !['the','and','for','are','this','that','with','have','show','want','your','what','does','come','any','can','you','please','thanks','hello','much','how'].includes(word));\n\nif (searchTerms.length === 0) {\n  return [{\n    json: {\n      senderPsid: senderPsid,\n      replyText: \"I'd love to help you find something! Try asking about a product like:\\n\\n• \\\"Show me t-shirts\\\"\\n• \\\"Do you have hoodies?\\\"\\n• \\\"Black jeans in size 32\\\"\\n• \\\"What do you have under $40?\\\"\\n\\nWhat are you looking for?\",\n      matchCount: 0\n    }\n  }];\n}\n\n// Score each product variant\nconst scored = activeProducts.map(product => {\n  let score = 0;\n  const searchableText = [\n    product.Product_Name || '',\n    product.Category || '',\n    product.Description || '',\n    product.Size || '',\n    product.Color || '',\n    product.Search_Keywords || ''\n  ].join(' ').toLowerCase();\n  \n  for (const term of searchTerms) {\n    if (searchableText.includes(term)) {\n      score++;\n    }\n  }\n  return { ...product, score };\n});\n\n// Filter products with score > 0\nconst matches = scored.filter(p => p.score > 0);\n\n// Group by Product_ID\nconst grouped = {};\nfor (const match of matches) {\n  const pid = match.Product_ID;\n  if (!grouped[pid]) {\n    grouped[pid] = {\n      Product_ID: pid,\n      Product_Name: match.Product_Name,\n      Category: match.Category,\n      Price: match.Price,\n      Currency: match.Currency || 'USD',\n      Description: match.Description,\n      sizes: [],\n      colors: [],\n      inStockCount: 0,\n      topScore: 0\n    };\n  }\n  if (match.score > grouped[pid].topScore) {\n    grouped[pid].topScore = match.score;\n  }\n  if (String(match.In_Stock).toUpperCase() === 'YES') {\n    grouped[pid].inStockCount++;\n    if (match.Size && !grouped[pid].sizes.includes(match.Size)) {\n      grouped[pid].sizes.push(match.Size);\n    }\n    if (match.Color && !grouped[pid].colors.includes(match.Color)) {\n      grouped[pid].colors.push(match.Color);\n    }\n  }\n}\n\n// Sort by score descending\nconst results = Object.values(grouped)\n  .sort((a, b) => b.topScore - a.topScore)\n  .slice(0, 5);\n\n// Build reply\nlet replyText = '';\n\nif (results.length === 0) {\n  replyText = `I couldn't find any products matching \"${customerMessage}\".\\n\\nHere are our categories:\\n• T-Shirts\\n• Jeans\\n• Hoodies\\n• Dresses\\n• Accessories\\n\\nTry asking something like \"Show me hoodies\" or \"Black t-shirts in large\".`;\n} else {\n  replyText = `I found ${results.length} product${results.length > 1 ? 's' : ''} for you:\\n\\n`;\n  \n  results.forEach((product, index) => {\n    replyText += `${index + 1}. ${product.Product_Name} — $${product.Price}\\n`;\n    if (product.sizes.length > 0) {\n      replyText += `   Sizes: ${product.sizes.join(', ')}\\n`;\n    }\n    if (product.colors.length > 0) {\n      replyText += `   Colors: ${product.colors.join(', ')}\\n`;\n    }\n    if (product.inStockCount === 0) {\n      replyText += `   ⚠️ Currently out of stock\\n`;\n    }\n    replyText += '\\n';\n  });\n  \n  replyText += `Would you like to order any of these? Just tell me the product, size, and color!`;\n}\n\nreturn [{\n  json: {\n    senderPsid: senderPsid,\n    replyText: replyText,\n    matchCount: results.length\n  }\n}];"
+      },
+      "id": "search-products",
+      "name": "Search & Format Products",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v18.0/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": {\n    \"id\": \"{{ $json.senderPsid }}\"\n  },\n  \"messaging_type\": \"RESPONSE\",\n  \"message\": {\n    \"text\": {{ JSON.stringify($json.replyText) }}\n  }\n}",
+        "options": {}
+      },
+      "id": "send-messenger-reply",
+      "name": "Send Messenger Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Facebook Page Access Token"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "GET Webhook (Verify)": {
+      "main": [
+        [
+          {
+            "node": "Verify Token Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Token Check": {
+      "main": [
+        [
+          {
+            "node": "Respond with Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 403 Forbidden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Webhook (Messages)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "Is Valid Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid Message?": {
+      "main": [
+        [
+          {
+            "node": "Read Products Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Read Products Sheet": {
+      "main": [
+        [
+          {
+            "node": "Search & Format Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search & Format Products": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2025-01-20T00:00:00.000Z",
+  "versionId": "1"
+}

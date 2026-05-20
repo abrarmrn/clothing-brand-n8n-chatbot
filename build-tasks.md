@@ -1,735 +1,332 @@
-# Build Tasks — Step by Step
+# Build Tasks — Facebook Messenger Chatbot
 
 ## Overview
 
-This is your **step-by-step checklist** to build the entire chatbot system. Follow the tasks in order. Each task builds on the previous one.
+This is your **step-by-step checklist** to build the Messenger chatbot. The project is built **incrementally** — you start with v1 (product lookup) and add features one version at a time.
 
-**Estimated total time:** 4-6 hours (for a complete beginner)
+**Current version: v1 — Product Lookup via Messenger**
 
-**Rule:** Complete each task fully before moving to the next one. Test as you go!
+| Version | Feature | Estimated Time |
+|---------|---------|---------------|
+| **v1** | Product Lookup (this guide) | 1-2 hours |
+| v2 | FAQ Answers | +30 min |
+| v3 | Greeting Replies | +15 min |
+| v4 | Order Creation | +60-90 min |
+| v5 | Order Tracking | +30 min |
+| v6 | Human Support Handoff | +30-40 min |
+
+**Rule:** Complete v1 fully before moving to v2. Test everything at each step!
 
 ---
 
-## Phase 1: Set Up Your Tools
+## Phase 1: Set Up Your Accounts
 
-*Time estimate: 30-45 minutes*
+*Time estimate: 20-30 minutes*
 
 ### Task 1.1: Set Up n8n
 
 | Detail | Info |
 |--------|------|
 | **What to do** | Install n8n or create an n8n Cloud account |
-| **Why** | n8n is where you will build the entire chatbot workflow |
-| **How** | Option A: Go to [n8n.io](https://n8n.io) and sign up for n8n Cloud (easiest). Option B: Self-host using Docker (more advanced). |
-| **Done when** | You can open n8n and see the workflow editor (empty canvas with a "+" button) |
+| **Why** | n8n receives Messenger messages and sends replies |
+| **How** | Option A: [n8n.io](https://n8n.io) Cloud (easiest — gives you a public URL automatically). Option B: Self-host with a public domain + HTTPS. |
+| **Done when** | You can open n8n and see the workflow editor |
 
-### Task 1.2: Create Your Google Sheets Database
+**Important:** Your n8n must have a **public HTTPS URL** (like `https://your-name.app.n8n.cloud` or `https://n8n.yourdomain.com`). Meta will NOT send webhooks to localhost.
 
-| Detail | Info |
-|--------|------|
-| **What to do** | Create the Google Sheets spreadsheet with all 6 tabs |
-| **Why** | This is your chatbot's database |
-| **How** | Follow the instructions in `google-sheets-structure.md` |
-| **Done when** | You have a spreadsheet with 6 tabs, each with the correct column headers in Row 1 |
-
-**Tabs to create:**
-1. **Products** — 15 columns (Product_ID through Active)
-2. **FAQ** — 8 columns (FAQ_ID through Last_Updated)
-3. **Orders** — 25 columns (Order_ID through Notes)
-4. **Tracking** — 11 columns (Order_ID through Updated_By)
-5. **Customers** — 12 columns (Customer_ID through Notes)
-6. **Support_Tickets** — 18 columns (Ticket_ID through Resolution_Notes)
-
-### Task 1.3: Add Sample Product Variants
+### Task 1.2: Create a Facebook Page
 
 | Detail | Info |
 |--------|------|
-| **What to do** | Add test product variants to the Products tab |
-| **Why** | You need data to test your chatbot's product search |
-| **How** | Create at least 5 products with multiple variants each (different size + color combos) |
-| **Done when** | Products tab has 15-20 rows of variant data |
+| **What to do** | Create a Facebook Page for your clothing brand (if you don't have one) |
+| **Why** | Customers message your Page — this is where the chatbot lives |
+| **How** | Go to facebook.com → Pages → Create New Page → fill in your brand info |
+| **Done when** | You have a Facebook Page where customers can click "Message" |
 
-**Remember:** Each row = one variant (one specific size + color combination). Use the examples from `google-sheets-structure.md`.
-
-**Sample products to add (with variants):**
-
-| Product | Variants to create |
-|---------|-------------------|
-| Classic Black T-Shirt (PROD-001) | 3 sizes × 3 colors = 9 rows |
-| Slim Fit Jeans (PROD-002) | 4 sizes × 2 colors = 8 rows |
-| Hoodie Pullover (PROD-003) | 3 sizes × 3 colors = 9 rows |
-| Summer Dress (PROD-004) | 3 sizes × 2 colors = 6 rows |
-| Baseball Cap (PROD-005) | 1 size × 4 colors = 4 rows |
-
-**For each variant row, fill in:**
-- Product_ID (same for all variants of one product)
-- Variant_SKU (unique! format: PROD-001-BLK-M)
-- Product_Name, Category, Description, Price, Currency
-- Size, Color (this is what makes each variant unique)
-- Stock_Qty (a number — some should be 0 for testing)
-- In_Stock (YES if Stock_Qty > 0, NO if Stock_Qty = 0)
-- Search_Keywords (extra words customers might use)
-- Active (YES for most, set 1-2 to NO for testing)
-
-### Task 1.4: Add Sample FAQ Entries
+### Task 1.3: Create a Meta Developer Account
 
 | Detail | Info |
 |--------|------|
-| **What to do** | Add at least 10 FAQ entries to the FAQ tab |
-| **Why** | The chatbot needs answers to search through |
-| **How** | Use the examples from `google-sheets-structure.md` and add your own |
-| **Done when** | FAQ tab has 10+ rows with Keywords filled in |
+| **What to do** | Sign up at developers.facebook.com |
+| **Why** | You need a Meta App to connect Messenger to your n8n webhook |
+| **How** | Go to [developers.facebook.com](https://developers.facebook.com) → sign in with your Facebook account → accept developer terms |
+| **Done when** | You can access the Meta Developer dashboard |
 
-**For each FAQ row, fill in:**
-- FAQ_ID, Category, Question, Keywords, Answer
-- Active = "YES" (set 1-2 to "NO" for testing)
-- Sort_Order = a number (1, 2, 3...) within each category
-- Last_Updated = today's date
-
-### Task 1.5: Connect Google Sheets to n8n
+### Task 1.4: Create a Meta App
 
 | Detail | Info |
 |--------|------|
-| **What to do** | Set up the Google Sheets credential in n8n |
-| **Why** | n8n needs permission to read/write your spreadsheet |
-| **How** | In n8n: go to Settings > Credentials > Add New > Google Sheets OAuth2. Follow the sign-in prompts. |
-| **Done when** | You can add a Google Sheets node and see your spreadsheet listed |
+| **What to do** | Create a new app with Messenger product |
+| **Why** | The app connects your Page to your webhook |
+| **How** | My Apps → Create App → Business type → name it "Clothing Brand Chatbot" → Add Messenger product |
+| **Done when** | You have an app with Messenger listed in the left sidebar |
 
-**Troubleshooting:**
-- If you see "Access Denied": make sure you authorized the correct Google account
-- If spreadsheet doesn't appear: check that you shared it with the correct account
-- If connection fails: try removing the credential and adding it again
+### Task 1.5: Generate Page Access Token
+
+| Detail | Info |
+|--------|------|
+| **What to do** | Generate a token that lets n8n send messages on behalf of your Page |
+| **Why** | Without this token, n8n cannot reply to customers |
+| **How** | In your Meta App: Messenger → Settings → Access Tokens → Add/Remove Pages → select your Page → Generate Token |
+| **Done when** | You have a long token string starting with "EAA..." copied somewhere safe |
+
+**Security:** Never share this token publicly. Never commit it to this repo.
 
 ---
 
-
-## Phase 2: Build the Core Workflow Structure
-
-*Time estimate: 45-60 minutes*
-
-### Task 2.1: Create a New Workflow
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Create a new blank workflow in n8n |
-| **Why** | This will be your main chatbot workflow |
-| **How** | In n8n: Click "Add Workflow" (or the "+" icon). Name it "Clothing Brand Chatbot" |
-| **Done when** | You have an empty workflow canvas with the name set |
-
-### Task 2.2: Add the Chat Trigger Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Add a Chat Trigger node as the first node |
-| **Why** | This starts the workflow when a message arrives |
-| **How** | Click "+" on the canvas > search "Chat Trigger" > add it |
-| **Done when** | You have a Chat Trigger node on the canvas. You can click "Chat" at the bottom of the n8n editor to open a test chat window |
-
-### Task 2.3: Add the Customer Identification Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Add a Google Sheets Search node that checks the Customers tab |
-| **Why** | Recognizes returning customers by their Chat_User_ID |
-| **How** | Add Google Sheets node > Operation: Search Rows > Sheet: Customers > Search Column: Chat_User_ID > Value: sender ID from trigger |
-| **Done when** | The node returns customer data if found, or empty results for new visitors |
-
-**What this gives you:**
-- If found: Customer_ID, Customer_Name, Email, Total_Orders, Total_Spent
-- Use Customer_Name for personalized greetings
-- Use Customer_ID to link orders and tickets later
-
-### Task 2.4: Add the Message Classifier
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Add a node that classifies incoming messages into categories |
-| **Why** | The chatbot needs to decide which branch to use |
-| **How** | **Option A (AI):** Add an AI Agent or OpenAI node with the classification prompt from `chatbot-branching-logic.md`. **Option B (No AI):** Add a Switch node with keyword conditions (also in `chatbot-branching-logic.md`). |
-| **Done when** | The node outputs one of: greeting, product_inquiry, faq, order_create, order_track, human_support, unknown |
-
-**Testing checkpoint:** Send "Hi" through the test chat → should output "greeting". Send "Do you have t-shirts?" → should output "product_inquiry". Send "Track ORD-123" → should output "order_track".
-
-### Task 2.5: Add the Router/Switch Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Route messages to different branches based on the classification |
-| **Why** | Each category needs to go to a different set of nodes |
-| **How** | Connect classifier output to a Switch node. Create 7 outputs (one per category). |
-| **Done when** | Messages are correctly routed to 7 different outputs |
-
----
-
-## Phase 3: Build Branch 1 — Direct Reply
-
-*Time estimate: 15 minutes*
-
-### Task 3.1: Create the Direct Reply Response
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Add a "Respond to Chat" node for greetings |
-| **Why** | Simple messages need quick, friendly replies |
-| **How** | Add "Respond to Chat" node. Connect to "greeting" output. Set response message. If customer was found in Task 2.3, use their Customer_Name for personalization. |
-| **Done when** | Sending "Hi" returns a welcome message |
-
-**Test messages:**
-- "Hi" → Welcome message (personalized if Customer_Name is available)
-- "Thanks" → "You're welcome" message
-- "Bye" → Goodbye message
-
----
-
-## Phase 4: Build Branch 2 — Product Lookup
-
-*Time estimate: 30-45 minutes*
-
-### Task 4.1: Add Product Search Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Add a Google Sheets node that searches the Products tab |
-| **Why** | When customers ask about products, the bot needs to find matching variants |
-| **How** | Add Google Sheets node > Operation: Search Rows > Sheet: Products > Add filters: Active = "YES" AND search keywords against Product_Name, Category, Color, Size, Search_Keywords |
-| **Done when** | Searching for "t-shirt" returns all t-shirt variants where Active = "YES" |
-
-**Important:** Always filter by Active = "YES" so hidden products never show up.
-
-### Task 4.2: Add Result Grouping Logic
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Group variant results by Product_ID so each product shows once |
-| **Why** | Without grouping, searching "t-shirts" might return 12 rows (all variants) instead of showing 1 product with its options |
-| **How** | Add a Code node or Set node that groups rows by Product_ID, then collects unique sizes and colors for each product |
-| **Done when** | A search returns grouped results like: "Classic Black T-Shirt — Sizes: S, M, L | Colors: Black, White" |
-
-**Grouping logic (what to extract per Product_ID):**
-- Product_Name (same for all variants)
-- Price (same for all variants)
-- Available sizes (from in-stock variants only, where In_Stock = "YES")
-- Available colors (from in-stock variants only)
-- Stock note (e.g., "Low stock!" if any variant has Stock_Qty < 3)
-
-### Task 4.3: Add "No Results" Check
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Add an IF node to handle empty search results |
-| **Why** | The bot needs different responses for "found products" vs "no matches" |
-| **How** | Add IF node > Condition: check if results array is not empty |
-| **Done when** | Empty searches go to "no results" message, found products go to formatting |
-
-### Task 4.4: Format and Send Product Reply
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Format grouped product data into a nice message |
-| **Why** | Raw data is ugly — make it customer-friendly |
-| **How** | Add Set node to build the message (product name, price, sizes, colors), then Respond to Chat node |
-| **Done when** | "Show me t-shirts" returns a formatted, grouped product list |
-
-**Test messages:**
-- "Show me t-shirts" → Grouped product list with sizes/colors
-- "Do you have hoodies in large?" → Filtered results for Hoodies, Size L
-- "Show me purple sandals" → "Not found" message with category suggestions
-- Ask for an out-of-stock variant → "Out of stock" message with alternatives
-
----
-
-
-## Phase 5: Build Branch 3 — FAQ Answers
-
-*Time estimate: 25 minutes*
-
-### Task 5.1: Add FAQ Search Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Add a Google Sheets node that searches the FAQ tab |
-| **Why** | Common questions need automatic answers |
-| **How** | Add Google Sheets node > Operation: Search Rows > Sheet: FAQ > Filter: Active = "YES" > Search the Keywords column for matches |
-| **Done when** | Searching for "shipping" returns your shipping FAQ entries |
-
-**Important:** Only return FAQs where Active = "YES". Use Sort_Order to prioritize when multiple match.
-
-### Task 5.2: Add Keyword Matching Logic
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Score FAQ entries by how many keywords match the customer's message |
-| **Why** | "How long does shipping take?" should match the shipping FAQ, not the returns FAQ |
-| **How** | Add a Code node that: (1) splits customer message into words, (2) compares against each FAQ's Keywords column, (3) returns the FAQ with the most matches. If tied, use lowest Sort_Order. |
-| **Done when** | "Return policy" matches the returns FAQ, not the shipping FAQ |
-
-### Task 5.3: Add "No Answer" Check and Reply
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Handle found and not-found scenarios |
-| **Why** | If no FAQ matches, offer alternatives |
-| **How** | IF node: if match found → send answer. If not → send "I don't have an answer for that" with options. |
-| **Done when** | Known questions get answers. Unknown questions get a helpful fallback. |
-
-**Test messages:**
-- "What's your return policy?" → Returns the return policy answer
-- "How long does shipping take?" → Returns shipping FAQ
-- "Do you accept Bitcoin?" → "No answer found" with suggestions
-
----
-
-## Phase 6: Build Branch 4 — Order Creation
-
-*Time estimate: 60-90 minutes*
-
-### Task 6.1: Set Up Order Conversation Flow
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Build the multi-step order collection process |
-| **Why** | Orders need: product, size, color, quantity, name, email, address, delivery, payment |
-| **How** | **Recommended:** Use an AI Agent node with conversation memory. It can naturally ask follow-up questions. **Alternative:** Build a sub-workflow with multiple steps. |
-| **Done when** | The bot can ask for each piece of info step by step |
-
-**The bot must collect these fields (mapping to Orders tab columns):**
-
-| Info to Ask | Maps to Column | Required? |
-|------------|----------------|-----------|
-| Which product | Product_ID, Product_Name | Yes |
-| Size | Size | Yes |
-| Color | Color | Yes |
-| How many | Quantity | Yes (default: 1) |
-| Customer name | Customer_Name | Yes |
-| Email | Customer_Email | Yes |
-| Phone | Customer_Phone | Optional |
-| Street address | Shipping_Address | Yes |
-| City | City | Yes |
-| Country | Country | Yes |
-| Delivery speed | Delivery_Method | Yes (default: Standard) |
-| Payment method | Payment_Method | Yes |
-| Special requests | Notes | Optional |
-
-### Task 6.2: Add Variant Validation Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Verify the selected variant exists and has enough stock |
-| **Why** | Can't sell products that don't exist or are out of stock |
-| **How** | Add Google Sheets Search node > Sheet: Products > Search for matching Product_ID + Size + Color where Active = "YES" |
-| **Done when** | Bot confirms variant exists and Stock_Qty >= Quantity before proceeding |
-
-**Validation checks (in order):**
-1. Does the Product_ID exist with Active = "YES"? → If no: "Product not found"
-2. Does the Size + Color combination exist? → If no: "That variant isn't available. Options: [list]"
-3. Is In_Stock = "YES"? → If no: "Out of stock. Alternatives: [list]"
-4. Is Stock_Qty >= requested Quantity? → If no: "Only [X] left. Want [X] instead?"
-
-**On success:** Retrieve the **Variant_SKU** and **Price** (Unit_Price) from the matched row.
-
-### Task 6.3: Add Order Save Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Save the completed order to the Orders tab (all 25 columns) |
-| **Why** | Once all info is collected and validated, the order must be stored |
-| **How** | Add Google Sheets node > Operation: Append Row > Sheet: Orders |
-| **Done when** | Completing an order creates a new row in Orders with all fields filled |
-
-**Auto-generated fields (the bot creates these, not the customer):**
-- **Order_ID**: Generate as ORD-YYYYMMDD-XXX
-- **Customer_ID**: From Customers tab (or generate new CUST-XXX for new customers)
-- **Variant_SKU**: From validation step
-- **Unit_Price**: From Products tab
-- **Total_Price**: Unit_Price × Quantity
-- **Currency**: From Products tab
-- **Payment_Status**: "Pending"
-- **Order_Status**: "Draft"
-- **Channel**: From chat trigger (WhatsApp, Website, etc.)
-- **Created_Date**: Current timestamp
-- **Updated_Date**: Current timestamp
-
-### Task 6.4: Update Customer Record
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Create or update the customer in the Customers tab |
-| **Why** | Track customer history, recognize them next time |
-| **How** | If existing customer (Customer_ID found): Update Total_Orders (+1), Last_Contact_Date, Last_Message_Date. If new customer: Append new row to Customers tab. |
-| **Done when** | After order, Customers tab reflects the new/updated customer |
-
-**For new customers, fill in:**
-- Customer_ID: Generate CUST-XXX
-- Chat_User_ID: From chat trigger
-- Customer_Name, Email, Phone: From order collection
-- Preferred_Channel: From chat trigger
-- First_Contact_Date: Now
-- Last_Contact_Date: Now
-- Last_Message_Date: Now
-- Total_Orders: 1
-- Total_Spent: This order's Total_Price
-- Notes: (blank)
-
-### Task 6.5: Add Order Confirmation Reply
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Send a complete order summary to the customer |
-| **Why** | Customers need confirmation with all details |
-| **How** | Add Respond to Chat node with the order summary template |
-| **Done when** | After order saves, customer sees: Order_ID, product details, Variant_SKU, price breakdown, shipping info, and next steps |
-
-**Test the full flow:**
-1. Say "I want to order the black t-shirt in size M"
-2. Provide quantity, name, email, address, delivery, payment when asked
-3. Confirm the order
-4. Check Google Sheets: new row in Orders tab with all 25 columns filled
-5. Check Customers tab: customer record created/updated
-
----
-
-
-## Phase 7: Build Branch 5 — Order Tracking
-
-*Time estimate: 30 minutes*
-
-### Task 7.1: Extract Order Number or Use Customer Email
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Detect if the message contains an order number, or use the known customer's email |
-| **Why** | If they already gave the order number, don't ask again. If they're a known customer, look up by email. |
-| **How** | Use a Set/Code node to: (1) check for "ORD-" pattern in message, (2) if not found, check if customer was identified in Task 2.3, (3) if neither, ask for order number or email |
-| **Done when** | Bot correctly detects order numbers, uses known customer email, or asks politely |
-
-### Task 7.2: Add Tracking Lookup Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Search the Tracking tab for the order |
-| **Why** | Customers want shipping status, carrier, and delivery estimate |
-| **How** | Add Google Sheets node > Operation: Search Rows > Sheet: Tracking > Search by Order_ID or Customer_Email |
-| **Done when** | Searching with a valid Order_ID returns: Shipping_Status, Carrier, Tracking_Number, Estimated_Delivery, Tracking_URL, Last_Updated, Updated_By |
-
-### Task 7.3: Add Orders Tab Fallback
-
-| Detail | Info |
-|--------|------|
-| **What to do** | If not in Tracking tab, check the Orders tab for order status |
-| **Why** | The order might exist but hasn't shipped yet (still Draft/Confirmed/Processing) |
-| **How** | Add another Google Sheets Search node > Sheet: Orders > Search by Order_ID. Return Order_Status and Payment_Status. |
-| **Done when** | Orders that haven't shipped show their current status instead of "not found" |
-
-### Task 7.4: Format and Send Tracking Reply
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Format tracking data into a customer-friendly message |
-| **Why** | Show status, carrier, dates, and tracking link clearly |
-| **How** | Add IF nodes for: (1) tracking found → full tracking reply, (2) order found but not shipped → status reply, (3) nothing found → error reply |
-| **Done when** | All three scenarios respond correctly |
-
-**Test messages:**
-- Add a sample row to Tracking tab, then ask "Where is order ORD-20250120-001?" → Full tracking details
-- Ask about an order that exists in Orders but NOT in Tracking → "Not shipped yet" status
-- Ask about a non-existent order → "Not found" with helpful suggestions
-- If known customer has multiple orders → List all their orders and ask which one
-
----
-
-## Phase 8: Build Branch 6 — Human Support Handoff
-
-*Time estimate: 30-40 minutes*
-
-### Task 8.1: Add Issue Collection Logic
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Ask the customer what they need help with (unless they're frustrated — then skip) |
-| **Why** | Gives the support team context without making angry customers repeat themselves |
-| **How** | IF node: if Handoff_Reason is "angry_customer" or "bot_failed_3x" → skip to ticket creation. Otherwise → ask "Could you briefly tell me what you need help with?" |
-| **Done when** | Calm customers are asked for details. Frustrated customers get immediate handoff. |
-
-### Task 8.2: Add Priority Assignment Logic
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Automatically assign priority (High/Medium/Low) based on the issue |
-| **Why** | Urgent issues need faster response |
-| **How** | Add IF/Switch node. Check for: angry language/ALL CAPS/damage/payment → High. Exchange/complaint/sizing → Medium. Everything else → Low. |
-| **Done when** | Different issues get appropriate priority levels |
-
-### Task 8.3: Add Support Ticket Creation Node
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Append a row to the Support_Tickets tab with all 18 columns |
-| **Why** | Your team needs this ticket to follow up |
-| **How** | Add Google Sheets node > Operation: Append Row > Sheet: Support_Tickets |
-| **Done when** | Triggering handoff creates a complete ticket row |
-
-**Fields to fill (all 18 columns):**
-
-| Column | Source |
-|--------|--------|
-| Ticket_ID | Generate: TKT-YYYYMMDD-XXX |
-| Conversation_ID | From chat trigger session ID |
-| Customer_ID | From Task 2.3 (or blank if unknown) |
-| Customer_Name | From Customers tab or collected during handoff |
-| Customer_Email | From Customers tab or collected during handoff |
-| Customer_Phone | From Customers tab (or blank) |
-| Channel | From chat trigger |
-| Issue_Category | Detected from context |
-| Issue_Description | Summary of the problem |
-| Last_User_Message | Exact last message (copy verbatim) |
-| Bot_Summary | Auto-generated conversation summary |
-| Handoff_Reason | customer_requested / bot_failed_3x / angry_customer / complex_issue / policy_exception |
-| Priority | From Task 8.2 |
-| Status | "Open" |
-| Created_Date | Current timestamp |
-| Assigned_To | (blank) |
-| Resolved_Date | (blank) |
-| Resolution_Notes | (blank) |
-
-### Task 8.4: Add Handoff Reply
-
-| Detail | Info |
-|--------|------|
-| **What to do** | Tell the customer their ticket was created with expected response time |
-| **Why** | Customer needs to know what happens next |
-| **How** | Add Respond to Chat node with ticket number, priority, and response time based on priority level |
-| **Done when** | Customer gets confirmation with ticket number and time expectation |
-
-**Response times by priority:**
-- High → "Within 2 hours"
-- Medium → "Within 4 hours"
-- Low → "Within 24 hours"
-
-**Test messages:**
-- "I want to speak to a human" → Ticket created (Low priority, Handoff_Reason: customer_requested)
-- "THIS IS TERRIBLE! WRONG ORDER!" → Ticket created (High priority, Handoff_Reason: angry_customer)
-- "I need help with an exchange" → Ticket created (Medium priority, Handoff_Reason: customer_requested)
-
----
-
-
-## Phase 9: Build Fallback and Error Handling
+## Phase 2: Set Up Google Sheets Database
 
 *Time estimate: 20-30 minutes*
 
-### Task 9.1: Add Fallback Reply with Counter
+### Task 2.1: Create Your Google Sheets Spreadsheet
 
 | Detail | Info |
 |--------|------|
-| **What to do** | Add a response for unrecognized messages with an escalation counter |
-| **Why** | The bot should never leave a customer without a response, and should auto-escalate after 3 failures |
-| **How** | Connect the "unknown/default" output to a Respond to Chat node with the menu. Track consecutive failures. After 3 → auto-trigger Branch 6. |
-| **Done when** | 1st unknown → menu. 2nd → menu + human option hint. 3rd → auto-handoff with Handoff_Reason = "bot_failed_3x" |
+| **What to do** | Create the spreadsheet with all 6 tabs |
+| **Why** | This is your chatbot's database |
+| **How** | Follow `google-sheets-structure.md` |
+| **Done when** | You have 6 tabs with correct column headers in Row 1 |
 
-### Task 9.2: Add Error Handling for Google Sheets Failures
+**For v1, you only need the Products tab filled with data.** The other tabs can have just headers for now.
 
-| Detail | Info |
-|--------|------|
-| **What to do** | Add error outputs so the bot doesn't crash if Google Sheets is unreachable |
-| **Why** | Sometimes connections fail — the bot should handle this gracefully |
-| **How** | On each Google Sheets node, add an Error output connection to a "sorry" message |
-| **Done when** | If Google Sheets times out, the customer gets: "I'm having trouble looking that up. Please try again in a moment, or I can connect you with our team." |
-
-### Task 9.3: Add Variant Validation Error Messages
+### Task 2.2: Add Product Variants to Products Tab
 
 | Detail | Info |
 |--------|------|
-| **What to do** | Handle all product/variant validation failures gracefully |
-| **Why** | Customers need clear messages when their selection isn't available |
-| **How** | After the Validate Variant node (Task 6.2), add IF nodes for each failure type |
-| **Done when** | Each validation failure produces a specific, helpful error message |
+| **What to do** | Add at least 15-20 product variant rows |
+| **Why** | The bot needs products to search through |
+| **How** | Each row = one variant (specific size + color). See examples in `google-sheets-structure.md` |
+| **Done when** | Products tab has 15-20 rows with all 15 columns filled |
 
-**Error messages:**
-- Product not found → "I can't find that product. Want to see what we have?"
-- Variant not available → "That size/color isn't available. Options: [list from same Product_ID]"
-- Out of stock → "That's out of stock. Alternatives: [list in-stock variants]"
-- Not enough stock → "We only have [Stock_Qty] left. Would you like [Stock_Qty]?"
+**Required columns for v1:**
+Product_ID, Variant_SKU, Product_Name, Category, Description, Price, Currency, Size, Color, Stock_Qty, In_Stock, Image_URL, Product_URL, Search_Keywords, Active
 
----
-
-## Phase 10: Testing
-
-*Time estimate: 30-45 minutes*
-
-### Task 10.1: Test Each Branch Individually
-
-| # | Test | Message to Send | Expected Result |
-|---|------|----------------|-----------------|
-| 1 | Greeting (new customer) | "Hello!" | Generic welcome message |
-| 2 | Greeting (known customer) | "Hi" (from known Chat_User_ID) | Personalized: "Hi [Name]!" |
-| 3 | Product found | "Show me t-shirts" | Grouped product list with sizes/colors |
-| 4 | Specific variant | "Do you have hoodie in large grey?" | Single variant with Stock_Qty |
-| 5 | Product not found | "Show me bikinis" | Not found + category suggestions |
-| 6 | Out of stock variant | Ask for variant with Stock_Qty = 0 | Out of stock + alternatives |
-| 7 | Inactive product | Ask for product with Active = "NO" | Not found (hidden) |
-| 8 | FAQ found | "Return policy?" | Correct answer |
-| 9 | FAQ not found | "Do you do custom embroidery?" | No answer + options |
-| 10 | Inactive FAQ | FAQ with Active = "NO" | Should NOT be returned |
-| 11 | Order start | "I want to buy a hoodie" | Starts collection flow |
-| 12 | Order complete | Provide all details | All 25 columns saved in Orders tab |
-| 13 | Order — variant invalid | Order a non-existent size | Helpful error with alternatives |
-| 14 | Order — out of stock | Order a variant with Stock_Qty = 0 | Out of stock + alternatives |
-| 15 | Tracking found | "Track order ORD-20250120-001" | Full tracking details |
-| 16 | Not shipped yet | Track an order in Orders but not Tracking | "Not shipped yet" with Order_Status |
-| 17 | Tracking not found | "Track order ORD-99999" | Not found message |
-| 18 | Human handoff (calm) | "Talk to a real person" | Low priority ticket + confirmation |
-| 19 | Human handoff (angry) | "THIS IS USELESS!" | High priority ticket + immediate confirmation |
-| 20 | Fallback x1 | "asdfjkl" | Menu of options |
-| 21 | Fallback x3 | Three gibberish messages | Auto-handoff with bot_failed_3x |
-| 22 | Error | Disconnect Google Sheets | Graceful error message |
-
-### Task 10.2: Test Edge Cases
-
-| # | Test | Message to Send | Expected Result |
-|---|------|----------------|-----------------|
-| 1 | Multi-intent | "Hi, I want to track my order" | Goes to tracking (not greeting) |
-| 2 | Cancel mid-order | "Never mind" during order flow | Order cancelled gracefully |
-| 3 | Empty message | "" | Fallback menu |
-| 4 | Very long message | Paragraph of text | Bot identifies main intent |
-| 5 | Emoji only | Thumbs up | Appropriate acknowledgment |
-| 6 | Photo sent | (image) | "I can't analyze images" message |
-| 7 | Returning customer orders | Known customer starts order | Pre-fills name/email from Customers tab |
-| 8 | Multiple orders (tracking) | Known customer asks "my orders?" | Lists all their orders |
-
-### Task 10.3: Verify Google Sheets Data Integrity
-
-| Check | How to Verify |
-|-------|---------------|
-| Orders have all 25 columns filled | Open Orders tab after test orders |
-| Variant_SKU matches correctly | Cross-reference with Products tab |
-| Total_Price = Unit_Price × Quantity | Check math on each test order |
-| Customer_ID links correctly | Same Customer_ID in Orders and Customers tabs |
-| Support tickets have all 18 columns | Open Support_Tickets tab after handoff tests |
-| Bot_Summary and Last_User_Message are filled | Check Support_Tickets entries |
-| No blank rows between data | Scroll through each tab |
-| Active = "NO" products never appear | Search for inactive products — should get "not found" |
+**Tips:**
+- Set some variants to `In_Stock = NO` and `Stock_Qty = 0` (for testing)
+- Set 1-2 variants to `Active = NO` (should never appear in search results)
+- Fill `Search_Keywords` generously — these improve search accuracy
 
 ---
 
+## Phase 3: Import the Workflow into n8n
 
-## Phase 11: Connect to a Real Channel (Optional — Do Later)
+*Time estimate: 15-20 minutes*
 
-*Time estimate: 1-2 hours per channel*
-
-### Task 11.1: Choose Your First Channel
-
-| Channel | Difficulty | Best For |
-|---------|-----------|----------|
-| Website chat widget | Easiest | If you have a website |
-| WhatsApp Business | Medium | Direct customer messaging |
-| Facebook Messenger | Medium | If you have a Facebook page |
-| Instagram DMs | Medium | If you have an Instagram business account |
-
-### Task 11.2: Replace Chat Trigger with Channel Trigger
+### Task 3.1: Import the JSON File
 
 | Detail | Info |
 |--------|------|
-| **What to do** | Replace the test Chat Trigger with a real channel trigger |
-| **Why** | Real customers will message from WhatsApp/website/etc. |
-| **How** | Remove the Chat Trigger and add the appropriate channel node |
-| **Done when** | A real message from the chosen channel triggers your workflow |
+| **What to do** | Import `n8n-messenger-product-lookup-v1.json` into n8n |
+| **Why** | This gives you the complete v1 workflow pre-built |
+| **How** | In n8n: menu (⋯) → Import from File → select the JSON file |
+| **Done when** | You see 11 nodes on the canvas in two paths (GET and POST) |
 
-**Important:** Make sure the new trigger provides:
-- Message text (the customer's message)
-- Sender ID (maps to Chat_User_ID in Customers tab)
-- Channel name (fills the Channel column in Orders and Support_Tickets)
-
-### Task 11.3: Test with Real Messages
+### Task 3.2: Connect Google Sheets Credential
 
 | Detail | Info |
 |--------|------|
-| **What to do** | Have a friend or second account send test messages |
-| **Why** | Real-world messages may differ from your test messages |
-| **How** | Send 10+ real messages from the connected channel |
-| **Done when** | All message types get correct responses through the real channel |
+| **What to do** | Set up Google Sheets OAuth2 in the "Read Products Sheet" node |
+| **Why** | n8n needs permission to read your spreadsheet |
+| **How** | Double-click "Read Products Sheet" → Credential → Create New → Google Sheets OAuth2 → sign in |
+| **Done when** | The node shows your "Clothing Brand Chatbot Database" spreadsheet and "Products" sheet |
+
+**Test it:** Click "Execute Node" on the Read Products Sheet node. You should see your product rows in the output.
+
+### Task 3.3: Set Your Verify Token
+
+| Detail | Info |
+|--------|------|
+| **What to do** | Replace `CHANGE_ME_VERIFY_TOKEN` with your own secret |
+| **Why** | Meta uses this to verify you own the webhook URL |
+| **How** | Double-click "Verify Token Check" node → change the second condition value from `CHANGE_ME_VERIFY_TOKEN` to your own string (e.g., `my_brand_chatbot_2025_secret`) |
+| **Done when** | The IF node shows your custom token |
+
+**Remember this exact token — you'll paste the same value in Meta Developer Console in Phase 4.**
+
+### Task 3.4: Create Facebook Page Access Token Credential
+
+| Detail | Info |
+|--------|------|
+| **What to do** | Add your Page Access Token to the "Send Messenger Reply" node |
+| **Why** | n8n needs this to send messages back to customers |
+| **How** | Double-click "Send Messenger Reply" → Credential → Create New → Header Auth → Name: `Facebook Page Access Token` → Header: `Authorization` → Value: `Bearer EAAxxxxxx...` |
+| **Done when** | The HTTP Request node has a valid credential attached |
+
+### Task 3.5: Activate the Workflow
+
+| Detail | Info |
+|--------|------|
+| **What to do** | Toggle the workflow ON (active) |
+| **Why** | The production webhook URL only works when the workflow is active |
+| **How** | Click the toggle in the top-right corner of the workflow editor |
+| **Done when** | Toggle shows "Active" and the workflow is green/highlighted |
 
 ---
 
-## Phase 12: Go-Live Checklist
+## Phase 4: Connect Meta Webhooks
 
-Before letting real customers use your chatbot, verify everything:
+*Time estimate: 10-15 minutes*
 
-### Functionality
-- [ ] All 6 branches respond correctly
-- [ ] Error messages are friendly and helpful
-- [ ] Google Sheets connection is stable (test multiple times)
-- [ ] Fallback escalation works (3 failures → auto-handoff)
-- [ ] Returning customers are recognized and personalized
+### Task 4.1: Copy Your Production Webhook URL
 
-### Data Integrity
-- [ ] Orders tab fills all 25 columns correctly
-- [ ] Support_Tickets tab fills all 18 columns correctly
-- [ ] Customers tab updates Total_Orders and Total_Spent
-- [ ] Variant_SKU is always correct in orders
-- [ ] Active = "NO" products never appear in search results
+| Detail | Info |
+|--------|------|
+| **What to do** | Get the public URL of your POST Webhook node |
+| **Why** | This is what you'll paste into Meta Developer Console |
+| **How** | Click the "POST Webhook (Messages)" node → look for "Production URL" at the top → Copy it |
+| **Done when** | You have a URL like `https://your-n8n.com/webhook/messenger-webhook` |
 
-### Operations
-- [ ] You have a plan to check Support_Tickets tab at least twice daily
-- [ ] You have a plan to review Draft orders daily
-- [ ] You know how to update stock (Stock_Qty and In_Stock) in Products tab
-- [ ] You have a plan to update Tracking tab when orders ship
-- [ ] You have told your team about the chatbot
-- [ ] You have a backup plan if the chatbot goes down
+**Note:** The GET and POST webhooks share the same path (`messenger-webhook`). Meta uses the same URL for both verification (GET) and messages (POST).
 
-### Content
-- [ ] All Products have Search_Keywords filled in
-- [ ] All FAQ entries have comprehensive Keywords
-- [ ] FAQ answers are up-to-date (check Last_Updated dates)
-- [ ] Bot messages have your brand name (not "[Brand Name]" placeholder)
+### Task 4.2: Configure Webhook in Meta Developer Console
 
----
+| Detail | Info |
+|--------|------|
+| **What to do** | Tell Meta where to send messages |
+| **Why** | This connects Messenger to your n8n workflow |
+| **How** | Meta App → Messenger → Settings → Webhooks → Add Callback URL |
+| **Done when** | You see "Webhook verified" success message |
 
-## Quick Reference: Task Summary
+**Fill in:**
+- **Callback URL:** Your production webhook URL from Task 4.1
+- **Verify Token:** The exact same token you set in Task 3.3
 
-| Phase | Tasks | Time Estimate |
-|-------|-------|---------------|
-| 1. Setup (tools + data) | 5 tasks | 30-45 min |
-| 2. Core Workflow | 5 tasks | 45-60 min |
-| 3. Direct Reply | 1 task | 15 min |
-| 4. Product Lookup | 4 tasks | 30-45 min |
-| 5. FAQ Answers | 3 tasks | 25 min |
-| 6. Order Creation | 5 tasks | 60-90 min |
-| 7. Order Tracking | 4 tasks | 30 min |
-| 8. Human Handoff | 4 tasks | 30-40 min |
-| 9. Error Handling | 3 tasks | 20-30 min |
-| 10. Testing | 3 tasks | 30-45 min |
-| 11. Channel Connect | 3 tasks | 1-2 hours |
-| 12. Go Live | Checklist | 15 min |
-| **Total** | **40 tasks** | **4-6 hours** |
+**What happens:** Meta sends a GET request to your URL. Your workflow checks the token, returns the challenge, and Meta confirms verification.
+
+### Task 4.3: Subscribe to Messenger Events
+
+| Detail | Info |
+|--------|------|
+| **What to do** | Tell Meta which events to send to your webhook |
+| **Why** | Without subscribing, you won't receive messages |
+| **How** | After verification, check the box for **"messages"** → click Save |
+| **Done when** | The "messages" subscription shows as active |
 
 ---
 
-## Tips for Success
+## Phase 5: Test Your Bot
 
-1. **Build one branch at a time.** Don't try to build everything at once.
-2. **Test constantly.** After every node you add, send a test message.
-3. **Start with the easiest branches** (Direct Reply → FAQ → Products → Tracking → Orders → Handoff).
-4. **Save your workflow often.** n8n autosaves, but click save manually too.
-5. **If something breaks, undo.** n8n has Ctrl+Z.
-6. **Keep your Google Sheets clean.** No blank rows, consistent YES/NO values.
-7. **Fill in Search_Keywords generously.** The more keywords, the better product search works.
-8. **Test with variant-level queries.** "Do you have the hoodie in large grey?" tests the full variant system.
-9. **Check the data after every order test.** Make sure all 25 columns are filled correctly.
-10. **Ask for help.** The n8n community forum is very helpful for beginners.
+*Time estimate: 10-15 minutes*
+
+### Task 5.1: Send a Test Message
+
+| Detail | Info |
+|--------|------|
+| **What to do** | Message your Facebook Page from a personal account |
+| **Why** | Verify the full flow works end-to-end |
+| **How** | Open Messenger → search for your Page → send "Show me t-shirts" |
+| **Done when** | The bot replies with matching products from your Google Sheets |
+
+**If the bot doesn't reply:**
+1. Check n8n Executions tab — is the workflow being triggered?
+2. Is the workflow ACTIVE? (toggle must be ON)
+3. Check the execution details — which node failed?
+4. Verify Google Sheets is connected (Execute "Read Products Sheet" manually)
+5. Verify Page Access Token is correct (check for 401/403 errors in Send node)
+
+### Task 5.2: Run the Full Test Suite
+
+| # | Test | What to Send | Expected Reply |
+|---|------|-------------|----------------|
+| 1 | Basic search | "Show me t-shirts" | Product list with sizes/colors |
+| 2 | Specific query | "Black hoodie in large" | Matching products |
+| 3 | No results | "Purple sandals" | "Couldn't find" + category list |
+| 4 | Price query | "Under $40" | Products under $40 |
+| 5 | Generic message | "Hi" | Helpful prompt (no search terms) |
+| 6 | Active filter | Search for product with Active=NO | Should NOT appear |
+| 7 | Out of stock | Product with all variants Stock_Qty=0 | Shows with "out of stock" note |
+| 8 | Send a photo | (send any image) | No reply (correctly ignored) |
+
+### Task 5.3: Check n8n Execution Logs
+
+| Detail | Info |
+|--------|------|
+| **What to do** | Review the execution history in n8n |
+| **Why** | Confirm data flows correctly through all nodes |
+| **How** | Click "Executions" in n8n sidebar → click on recent executions → inspect each node's output |
+| **Done when** | You can see: webhook received → message extracted → products read → reply formatted → reply sent |
 
 ---
 
-## What To Do After Go-Live
+## Phase 6: Go Live with v1
 
-After your chatbot is live:
+### v1 Go-Live Checklist
 
-1. **Daily:** Check Support_Tickets tab for open tickets (respond within priority timeframes)
-2. **Daily:** Review Draft orders and confirm/process them
-3. **Weekly:** Check which FAQ questions the bot couldn't answer (improve Keywords)
-4. **Weekly:** Review Handoff_Reason values — if "bot_failed_3x" is common, improve keywords
-5. **Weekly:** Update Stock_Qty for products that sold
-6. **Monthly:** Add new FAQ entries based on common questions
-7. **Monthly:** Add new products/variants to the Products tab
-8. **Monthly:** Review Total_Spent in Customers tab to identify VIPs
+- [ ] Workflow is ACTIVE in n8n
+- [ ] Meta webhook is verified and "messages" subscription is active
+- [ ] Products tab has real product data (not just test data)
+- [ ] Search_Keywords column is filled for all products
+- [ ] Active = "NO" products don't appear in search
+- [ ] Bot replies within a few seconds
+- [ ] Replies are under 2000 characters
+- [ ] Sending a photo/sticker doesn't crash the bot
+- [ ] Page Access Token is valid (not expired)
+- [ ] Your n8n instance has a stable public URL
 
-**Congratulations!** You will have built a fully functional, variant-aware chatbot for your clothing brand!
+### After Go-Live
+
+- **Daily:** Check n8n execution logs for errors
+- **Weekly:** Review what customers are searching for (check execution logs)
+- **Weekly:** Add Search_Keywords for products that aren't being found
+- **As needed:** Add new products to the Products tab
+
+---
+
+## Future Phases (v2-v6)
+
+These will be built in order after v1 is stable:
+
+### v2: Add FAQ Answers (+30 min)
+- Add FAQ data to the FAQ tab in Google Sheets
+- Add a Message Classifier node (Switch or AI) between "Is Valid Message?" and product search
+- Add FAQ Search + Reply branch
+- Connect reply to existing Send Messenger Reply pattern
+
+### v3: Add Greeting Replies (+15 min)
+- Add greeting detection to the classifier
+- Add a simple reply node for hi/thanks/bye
+- Optional: look up PSID in Customers tab for personalization
+
+### v4: Add Order Creation (+60-90 min)
+- Add order detection to classifier
+- Build multi-step conversation (product → size → color → name → email → address → payment)
+- Add variant validation against Products tab
+- Save to Orders tab + Customers tab
+- Send confirmation via Messenger
+
+### v5: Add Order Tracking (+30 min)
+- Add tracking detection to classifier
+- Look up customer by PSID → get Customer_ID → search Orders/Tracking tabs
+- Reply with order status or tracking info
+
+### v6: Add Human Handoff (+30-40 min)
+- Add support detection to classifier
+- Add automatic escalation after 3 fallbacks
+- Create Support_Tickets row with full context
+- Reply with ticket number and expected response time
+
+---
+
+## Quick Reference: v1 Architecture
+
+```
+[GET Webhook] → [Token Check] → [Challenge/403]
+
+[POST Webhook] → [200 OK] + [Extract Message] → [Valid?] → [Read Products] → [Search & Format] → [Send Reply]
+```
+
+**11 nodes total. 2 credentials (Google Sheets + Page Access Token). 1 placeholder to change (verify token).**
+
+---
+
+## Troubleshooting Quick Reference
+
+| Problem | Most Likely Cause | Fix |
+|---------|------------------|-----|
+| Meta says "webhook verification failed" | Token mismatch or workflow not active | Check token in IF node matches Meta exactly; activate workflow |
+| Bot doesn't reply | Page Access Token wrong/expired | Regenerate token in Meta App |
+| Bot replies "I'd love to help you find something" for everything | Search terms not matching any products | Add more Search_Keywords to Products tab |
+| Bot replies with wrong products | Search_Keywords too broad | Make keywords more specific |
+| Error in execution log: "Google Sheets" node | Credential expired or sheet renamed | Re-authorize Google Sheets credential |
+| Duplicate replies | Meta retried because 200 wasn't fast enough | Should not happen with parallel 200 response; check n8n load |
+| Works in test but not from real Messenger | App in Development mode | Switch Meta App to Live mode |
