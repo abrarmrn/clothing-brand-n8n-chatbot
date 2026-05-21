@@ -69,6 +69,7 @@ The chatbot uses **Facebook Messenger webhooks**, not n8n's built-in Chat Trigge
 | 4 | **Draft Order Creation** | Creates a new order with full details and saves it to Google Sheets |
 | 5 | **Order Tracking** | Looks up order status and shipping info from Google Sheets |
 | 6 | **Human Support Handoff** | Connects the customer to a real person and creates a detailed support ticket |
+| 7 | **Style Recommendations** | Gives outfit and styling advice based on your catalog |
 
 ---
 
@@ -101,6 +102,8 @@ The chatbot uses **Facebook Messenger webhooks**, not n8n's built-in Chat Trigge
 | `n8n-workflow-plan.md` | Full workflow architecture — v2 hybrid design |
 | `chatbot-branching-logic.md` | How the chatbot decides what to do with each message |
 | `build-tasks.md` | Step-by-step tasks to build and test the system |
+| `n8n-messenger-hybrid-ai-v4.json` | **Importable n8n workflow v4** — style routing, message.mid dedup, single Send node |
+| `messenger-hybrid-v4-import-instructions.md` | **v4 setup guide** — import, credentials, testing |
 
 ---
 
@@ -147,18 +150,24 @@ See `google-sheets-structure.md` for the complete column list, examples, and set
 | **Sender PSID for customer identity** | Messenger uses Page-Scoped IDs to identify each customer uniquely |
 | **HTTP Request node for Send API** | n8n sends replies back through Facebook's Graph API |
 | **AI Agent system prompt restricts topics** | Prevents AI from inventing stock levels, prices, or order statuses |
-| **Incremental build (v1 → v2 → v3)** | Start simple, add complexity gradually, always have a working backup |
+| **Incremental build (v1 → v2 → v3 → v4)** | Start simple, add complexity gradually, always have a working backup |
+| **v4: Style routed before order intent** | "What should I wear?" is advice, not a purchase — prevents misclassification |
+| **v4: Single final Send node** | All branches output `{replyText, senderId}` to one Messenger Send API call |
+| **v4: message.mid deduplication** | Prevents double-replies when Meta retries webhook delivery |
+
+**Fastest path to a working chatbot:** Import `n8n-messenger-hybrid-ai-v4.json` and follow `messenger-hybrid-v4-import-instructions.md`.
 
 ---
 
 ## Important Notes
 
-- This repository contains planning documents AND importable workflow JSONs (v1, v2, and v3)
+- This repository contains planning documents AND importable workflow JSONs (v1, v2, v3, and v4)
 - **No API keys, passwords, or tokens are stored in this repo** — all credentials go inside n8n
 - JSON files use placeholder values (`CHANGE_ME_VERIFY_TOKEN`, `REPLACE_WITH_YOUR_CREDENTIAL_ID`, `TELEGRAM_BOT_TOKEN_PLACEHOLDER`)
 - All data is stored in YOUR Google Sheets (you control everything)
 - The workflow requires n8n to have a **public HTTPS URL** (Meta won't send to localhost)
-- v1 and v2 JSONs are kept as backups — do not delete them
+- v1, v2, and v3 JSONs are kept as backups — do not delete them
+- v4 adds style recommendations, message.mid dedup, and canonical output structure
 
 ---
 

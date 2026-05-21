@@ -1,0 +1,701 @@
+{
+  "name": "Clothing Brand Messenger Chatbot v4 - Hybrid AI",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-trigger",
+      "name": "Messenger Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [220, 300],
+      "webhookId": "messenger-webhook-id"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-verify",
+      "name": "Messenger Verify Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [220, 100],
+      "webhookId": "messenger-verify-id"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "verify-token-check",
+              "leftValue": "={{ $json.query['hub.verify_token'] }}",
+              "rightValue": "YOUR_VERIFY_TOKEN_HERE",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-verify-check",
+      "name": "Check Verify Token",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-verify-respond",
+      "name": "Respond With Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 60]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Forbidden",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "node-verify-reject",
+      "name": "Reject Verification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "EVENT_RECEIVED",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-ack-200",
+      "name": "Acknowledge 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract messaging event from Facebook payload\nconst body = $input.first().json.body;\nconst entries = body.entry || [];\nconst results = [];\n\nfor (const entry of entries) {\n  const messaging = entry.messaging || [];\n  for (const event of messaging) {\n    if (event.message && event.message.text) {\n      results.push({\n        json: {\n          senderId: event.sender.id,\n          recipientId: event.recipient.id,\n          messageId: event.message.mid,\n          messageText: event.message.text,\n          timestamp: event.timestamp\n        }\n      });\n    }\n  }\n}\n\nif (results.length === 0) {\n  // Non-text event (postback, delivery receipt, etc.) - stop processing\n  return [];\n}\n\nreturn results;"
+      },
+      "id": "node-extract-message",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deduplication using message.mid\n// In production, replace this with a Redis/DB lookup.\n// This in-memory approach works per-execution only as a structural placeholder.\n// For true dedup, use an external store (Redis SET with TTL, or a Google Sheets \"ProcessedMessages\" tab).\n\nconst messageId = $input.first().json.messageId;\n\n// Placeholder: In a real deployment, check if messageId exists in your store.\n// If it does, return empty to stop processing.\n// For now, we pass through and mark it for downstream awareness.\n\nreturn [\n  {\n    json: {\n      ...$input.first().json,\n      deduplicationNote: 'In production, check messageId against external store before proceeding.',\n      isDuplicate: false\n    }\n  }\n];"
+      },
+      "id": "node-dedup-check",
+      "name": "Dedup Check (message.mid)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-not-duplicate",
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-dedup-gate",
+      "name": "Is Not Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an intent classifier for a clothing brand chatbot. Classify the customer message into EXACTLY ONE category. Return ONLY the category keyword, nothing else.\n\nCategories (checked in this priority order):\n1. order_track - asking about an existing order status, delivery, tracking, mentions ORD- number\n2. style_inquiry - asking for outfit advice, style recommendations, what goes with X, occasion-based suggestions, fashion tips, what to wear\n3. order_create - wants to buy/order/purchase something specific, add to cart\n4. human_support - wants a real person, is frustrated, angry, complex issue, complaint\n5. product_inquiry - asking about products, browsing catalog, availability, price, sizes, colors, what do you have\n6. faq - questions about shipping, returns, sizing guide, payment methods, policies, business hours\n7. greeting - simple hi, hello, thanks, bye, ok, affirmations\n8. unknown - cannot determine intent\n\nIMPORTANT: style_inquiry is checked BEFORE order_create. If the message asks for style advice or recommendations (even if it mentions products), classify as style_inquiry."
+            },
+            {
+              "role": "user",
+              "content": "={{ $json.messageText }}"
+            }
+          ]
+        }
+      },
+      "id": "node-ai-classifier",
+      "name": "AI Intent Classifier",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.4,
+      "position": [1320, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize the AI classifier output\nconst raw = ($input.first().json.message?.content || $input.first().json.choices?.[0]?.message?.content || '').trim().toLowerCase();\n\nconst validIntents = ['order_track', 'style_inquiry', 'order_create', 'human_support', 'product_inquiry', 'faq', 'greeting', 'unknown'];\n\nlet intent = 'unknown';\nfor (const valid of validIntents) {\n  if (raw.includes(valid)) {\n    intent = valid;\n    break;\n  }\n}\n\n// Pass through original message data\nconst prev = $('Dedup Check (message.mid)').first().json;\n\nreturn [\n  {\n    json: {\n      ...prev,\n      intent: intent,\n      rawClassification: raw\n    }\n  }\n];"
+      },
+      "id": "node-normalize-intent",
+      "name": "Normalize Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "greeting",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "greeting"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "product_inquiry",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "product_inquiry"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "faq",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "faq"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "order_create",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "order_create"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "order_track",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "order_track"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "human_support",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "human_support"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "style_inquiry",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "style_inquiry"
+            }
+          ],
+          "fallbackOutput": {
+            "renameOutput": "unknown"
+          }
+        },
+        "options": {}
+      },
+      "id": "node-intent-router",
+      "name": "Intent Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1760, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Branch 1: Greeting - Direct Reply\nconst msg = $('Normalize Intent').first().json.messageText.toLowerCase();\nlet replyText = '';\n\nif (msg.includes('bye') || msg.includes('goodbye') || msg.includes('see you')) {\n  replyText = 'Goodbye! Thanks for chatting with us. Come back anytime! 👋';\n} else if (msg.includes('thank') || msg.includes('thx') || msg.includes('appreciate')) {\n  replyText = \"You're welcome! Happy to help. Is there anything else I can do for you?\";\n} else if (msg.includes('ok') || msg.includes('got it') || msg.includes('sure') || msg.includes('perfect')) {\n  replyText = 'Great! Let me know if you need anything else.';\n} else {\n  replyText = \"Hello! Welcome to our store! 🛍️\\n\\nI can help you with:\\n• Browsing products\\n• Style recommendations\\n• Answering questions\\n• Placing orders\\n• Tracking deliveries\\n\\nWhat would you like to do?\";\n}\n\nreturn [{ json: { replyText, senderId: $('Normalize Intent').first().json.senderId } }];"
+      },
+      "id": "node-branch-greeting",
+      "name": "Branch: Greeting",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Branch 2: Product Inquiry\n// In production, this queries Google Sheets. Here we return a structured reply.\nconst messageText = $('Normalize Intent').first().json.messageText;\n\nconst replyText = `Thanks for your interest! Let me look into that for you.\\n\\nBased on your message: \"${messageText}\"\\n\\nHere are some options from our catalog:\\n\\n🔍 I'm searching our products now...\\n\\n(In production, this node queries Google Sheets Products tab and returns matching items with prices, sizes, and availability.)\\n\\nWould you like to:\\n• See a specific category?\\n• Filter by size or color?\\n• Get style recommendations?`;\n\nreturn [{ json: { replyText, senderId: $('Normalize Intent').first().json.senderId } }];"
+      },
+      "id": "node-branch-product",
+      "name": "Branch: Product Inquiry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 50]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Branch 3: FAQ\n// In production, this queries Google Sheets FAQ tab by keyword matching.\nconst messageText = $('Normalize Intent').first().json.messageText;\n\nconst replyText = `Great question! Let me find that for you.\\n\\n(In production, this node searches the FAQ tab in Google Sheets using keyword matching against your message.)\\n\\nIn the meantime, here are our most common topics:\\n• Shipping: Standard 5-7 business days, Express 2-3 days\\n• Returns: 30-day return policy, unworn with tags\\n• Sizing: Check our size guide for measurements\\n• Payment: Visa, Mastercard, PayPal, Apple Pay\\n\\nDoes this help? If not, I can connect you with our team!`;\n\nreturn [{ json: { replyText, senderId: $('Normalize Intent').first().json.senderId } }];"
+      },
+      "id": "node-branch-faq",
+      "name": "Branch: FAQ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Branch 4: Order Create\n// In production, this starts a multi-turn conversation using AI Agent with memory.\nconst messageText = $('Normalize Intent').first().json.messageText;\n\nconst replyText = `I'd love to help you place an order! 🛒\\n\\nTo get started, I'll need a few details:\\n\\n1️⃣ Which product would you like? (name or describe it)\\n2️⃣ What size?\\n3️⃣ What color?\\n4️⃣ How many?\\n\\nYou can provide all at once or I'll ask step by step.\\n\\n(In production, this uses an AI Agent with conversation memory to collect: product, size, color, quantity, name, and email, then saves a Draft order to Google Sheets.)`;\n\nreturn [{ json: { replyText, senderId: $('Normalize Intent').first().json.senderId } }];"
+      },
+      "id": "node-branch-order-create",
+      "name": "Branch: Order Create",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Branch 5: Order Tracking\nconst messageText = $('Normalize Intent').first().json.messageText;\n\n// Try to extract order number from message\nconst orderMatch = messageText.match(/ORD-[\\w-]+/i);\nlet replyText = '';\n\nif (orderMatch) {\n  const orderId = orderMatch[0].toUpperCase();\n  replyText = `Let me look up order ${orderId} for you... 📦\\n\\n(In production, this searches the Tracking tab in Google Sheets by Order_ID and returns: status, carrier, tracking number, shipped date, and estimated delivery.)\\n\\nIf I can't find tracking info, it may mean:\\n• The order hasn't shipped yet\\n• The order number has a typo\\n\\nWould you like me to check with a different order number or your email address?`;\n} else {\n  replyText = `I'd be happy to check your order status! 📦\\n\\nCould you provide your:\\n• Order number (starts with ORD-), or\\n• Email address used for the order\\n\\nExample: ORD-20250120-001`;\n}\n\nreturn [{ json: { replyText, senderId: $('Normalize Intent').first().json.senderId } }];"
+      },
+      "id": "node-branch-order-track",
+      "name": "Branch: Order Tracking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Branch 6: Human Support Handoff\n// In production, this creates a support ticket in Google Sheets.\nconst messageText = $('Normalize Intent').first().json.messageText;\n\nconst replyText = `I understand you'd like some extra help. I'm connecting you with our team now. 🙋\\n\\nI've created a support ticket for you.\\n\\n(In production, a ticket is saved to the Support Tickets tab in Google Sheets with auto-assigned priority.)\\n\\nOur team will reach out within:\\n• High priority: 2 hours\\n• Medium priority: 4 hours\\n• Low priority: 24 hours\\n\\n(Business hours: Mon-Fri, 9 AM - 6 PM)\\n\\nIf it's urgent, you can also email: support@yourbrand.com\\n\\nIs there anything else I can help with while you wait?`;\n\nreturn [{ json: { replyText, senderId: $('Normalize Intent').first().json.senderId } }];"
+      },
+      "id": "node-branch-human-support",
+      "name": "Branch: Human Support",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 650]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Branch 7: Style Inquiry (NEW in v4 - checked BEFORE order_create)\n// In production, this uses AI with product catalog context for personalized recommendations.\nconst messageText = $('Normalize Intent').first().json.messageText;\n\nconst replyText = `Great question! I'd love to help with styling! 👗✨\\n\\nBased on your message: \"${messageText}\"\\n\\n(In production, this uses an AI node with your product catalog as context to generate personalized style recommendations.)\\n\\nHere are some general tips:\\n• For casual everyday: Our Classic T-Shirts pair great with Slim Fit Jeans\\n• For layering: Try a Hoodie Pullover over any tee\\n• For a polished look: Dark jeans + a fitted tee\\n\\nWould you like me to:\\n• Suggest outfits for a specific occasion?\\n• Show products that match a color/style?\\n• Help you complete a look?`;\n\nreturn [{ json: { replyText, senderId: $('Normalize Intent').first().json.senderId } }];"
+      },
+      "id": "node-branch-style",
+      "name": "Branch: Style Inquiry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 800]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fallback: Unknown intent\nconst replyText = `I'm not sure I understood that. Here's what I can help with:\\n\\n1️⃣ Browse products - \"Show me t-shirts\"\\n2️⃣ Style advice - \"What should I wear to a party?\"\\n3️⃣ Answer questions - \"What's your return policy?\"\\n4️⃣ Place an order - \"I want to buy...\"\\n5️⃣ Track an order - \"Where is my order ORD-XXXXX?\"\\n6️⃣ Talk to a human - \"I need help\"\\n\\nWhich would you like?`;\n\nreturn [{ json: { replyText, senderId: $('Normalize Intent').first().json.senderId } }];"
+      },
+      "id": "node-branch-unknown",
+      "name": "Branch: Unknown/Fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 950]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v18.0/me/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "YOUR_PAGE_ACCESS_TOKEN_HERE"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": {\n    \"id\": \"{{ $json.senderId }}\"\n  },\n  \"message\": {\n    \"text\": {{ JSON.stringify($json.replyText) }}\n  },\n  \"messaging_type\": \"RESPONSE\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "node-send-messenger",
+      "name": "Send Messenger Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2300, 400]
+    }
+  ],
+  "connections": {
+    "Messenger Verify Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check Verify Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Verify Token": {
+      "main": [
+        [
+          {
+            "node": "Respond With Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messenger Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge 200",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "Dedup Check (message.mid)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup Check (message.mid)": {
+      "main": [
+        [
+          {
+            "node": "Is Not Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Not Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "AI Intent Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "AI Intent Classifier": {
+      "main": [
+        [
+          {
+            "node": "Normalize Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Intent": {
+      "main": [
+        [
+          {
+            "node": "Intent Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Router": {
+      "main": [
+        [
+          {
+            "node": "Branch: Greeting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Branch: Product Inquiry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Branch: FAQ",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Branch: Order Create",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Branch: Order Tracking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Branch: Human Support",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Branch: Style Inquiry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Branch: Unknown/Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: Greeting": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: Product Inquiry": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: FAQ": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: Order Create": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: Order Tracking": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: Human Support": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: Style Inquiry": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: Unknown/Fallback": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "instanceId": "placeholder-instance-id"
+  },
+  "tags": [
+    {
+      "name": "messenger",
+      "id": "tag-messenger"
+    },
+    {
+      "name": "chatbot",
+      "id": "tag-chatbot"
+    },
+    {
+      "name": "v4-hybrid-ai",
+      "id": "tag-v4"
+    }
+  ]
+}

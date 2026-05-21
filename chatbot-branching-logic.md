@@ -7,6 +7,8 @@ This document explains **how the chatbot decides what to do** when a customer se
 **Platform:** Facebook Messenger
 **Design:** Rules-first, AI-fallback
 
+> **v4 Update:** The v4 workflow (`n8n-messenger-hybrid-ai-v4.json`) adds a **Style Recommendation** branch (Branch 7) that is routed **before** order intent. It also uses an AI classifier (GPT-4o-mini) for all intent detection with 8 categories: `order_track`, `style_inquiry`, `order_create`, `human_support`, `product_inquiry`, `faq`, `greeting`, `unknown`. Style is checked before order to prevent misclassifying "What should I wear?" as a purchase intent.
+
 ---
 
 ## The Hybrid Routing Principle

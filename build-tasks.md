@@ -6,6 +6,8 @@ This is your **step-by-step checklist** to get the Hybrid AI v2 chatbot running 
 
 **Estimated time:** 1-2 hours for v2 setup (assumes v1 was already working)
 
+> **Fast-Track Option (v4):** If you want the latest features (style recommendations, message dedup, AI classification), import `n8n-messenger-hybrid-ai-v4.json` and follow `messenger-hybrid-v4-import-instructions.md` instead. You can be live in ~30 minutes.
+
 ---
 
 ## What v2 Adds Over v1
