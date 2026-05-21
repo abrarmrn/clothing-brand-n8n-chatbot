@@ -6,7 +6,7 @@ This document explains the **Messenger Hybrid AI v2** workflow architecture — 
 
 **Core principle:** Save AI/API costs by answering from rules and data first. Only use the AI Agent when no confident answer can be given from static rules or Google Sheets.
 
-> **v4 Available:** The v4 workflow (`n8n-messenger-hybrid-ai-v4.json`) provides an upgraded version with: AI-first classification (GPT-4o-mini), style recommendations branch, message.mid deduplication, canonical `{replyText, senderId}` output from all branches, and a single final Messenger Send API node. See `messenger-hybrid-v4-import-instructions.md` for setup.
+> **v5 Available (Latest):** The v5 workflow (`n8n-messenger-hybrid-ai-v5.json`) is a stable upgrade from v3 with: style/occasion routing before order intent, message.mid deduplication, customer memory, typo normalization, size guide, objection handling, budget-aware search, improved product ranking, and canonical output from all branches. See `messenger-hybrid-v5-import-instructions.md` for setup and `messenger-hybrid-v5-test-plan.md` for testing.
 
 ---
 

@@ -4,7 +4,7 @@
 
 Your Google Sheets spreadsheet acts as the **database** for your chatbot. Think of it like a simple filing cabinet where each drawer (tab) holds different information.
 
-You will create **one Google Sheets spreadsheet** with **6 tabs** (sheets) inside it.
+You will create **one Google Sheets spreadsheet** with **6 required tabs** (+ 2 optional tabs for v5 features) inside it.
 
 ---
 
@@ -399,3 +399,110 @@ This means you can look up:
 - Tracking info for any order
 - All support tickets for a customer
 - Which product variant was ordered
+
+
+
+---
+
+## Tab 7: Size_Guide (Optional — v5)
+
+### What is this tab for?
+
+This stores size recommendations based on height and weight. When a customer asks "amar height 5.6, weight 65, kon size nibo?" the chatbot uses this tab to recommend the right size.
+
+### Columns
+
+| Column | What To Put Here | Example |
+|--------|-----------------|---------|
+| A: **Category** | Product category | T-Shirts |
+| B: **Size** | Size code | M |
+| C: **Min_Height_Feet** | Minimum height in feet | 5 |
+| D: **Max_Height_Feet** | Maximum height in feet | 5 |
+| E: **Min_Weight_Kg** | Minimum weight in kg | 55 |
+| F: **Max_Weight_Kg** | Maximum weight in kg | 70 |
+| G: **Chest** | Chest measurement (inches) | 38 |
+| H: **Length** | Garment length (inches) | 27 |
+| I: **Shoulder** | Shoulder width (inches) | 17 |
+| J: **Waist** | Waist measurement (inches) | 32 |
+| K: **Fit_Type** | Regular, Slim, Oversized | Regular |
+| L: **Notes** | Additional fit notes | Good for average build |
+
+### Example Rows
+
+| Category | Size | Min_Height_Feet | Max_Height_Feet | Min_Weight_Kg | Max_Weight_Kg | Chest | Length | Fit_Type | Notes |
+|----------|------|-----------------|-----------------|---------------|---------------|-------|--------|----------|-------|
+| T-Shirts | S | 5 | 5 | 45 | 55 | 36 | 25 | Regular | Slim build |
+| T-Shirts | M | 5 | 5 | 55 | 70 | 38 | 27 | Regular | Average build |
+| T-Shirts | L | 5 | 6 | 65 | 80 | 40 | 28 | Regular | Athletic build |
+| T-Shirts | XL | 5 | 6 | 75 | 95 | 42 | 29 | Regular | Larger build |
+| Hoodies | M | 5 | 5 | 55 | 70 | 40 | 26 | Oversized | Relaxed fit |
+
+### Tips
+
+- Height is stored in feet (whole numbers) for simplicity
+- Weight in kg
+- One row per category+size combination
+- Add "Oversized" fit type for trendy loose-fit items
+- If your brand doesn't have size chart data yet, leave this tab empty — the bot will ask customers to share height/weight for manual help
+
+---
+
+## Tab 8: Sales_Objections (Optional — v5)
+
+### What is this tab for?
+
+This stores warm, helpful responses for common customer objections. When someone says "dam beshi" (price too high) or "discount hobe?" (will there be a discount?), the chatbot replies with a value-focused answer instead of ignoring or defaulting to AI.
+
+### Columns
+
+| Column | What To Put Here | Example |
+|--------|-----------------|---------|
+| A: **Objection_ID** | Unique ID | OBJ-001 |
+| B: **Objection_Type** | Category of objection | price |
+| C: **Keywords** | Trigger words (comma-separated) | dam beshi, expensive, price high, beshi dam |
+| D: **Response** | Warm reply (in Banglish — bot adapts to customer language) | Amader products premium quality fabric use kora. Budget friendly options o ache — ki range e khujchen? |
+| E: **Follow_Up_Question** | One follow-up to ask | Apnar budget range ta janan, ami match kore dekhte pari |
+| F: **Active** | YES or NO | YES |
+
+### Example Rows
+
+| Objection_ID | Objection_Type | Keywords | Response | Follow_Up_Question | Active |
+|-------------|----------------|----------|----------|-------------------|--------|
+| OBJ-001 | price | dam beshi, expensive, price high, beshi dam | Amader products premium quality fabric use kora hoy. But budget-friendly options o ache. | Apnar budget range ta janan? | YES |
+| OBJ-002 | discount | discount, offer, coupon, promo, last price, discount hobe | Amra consistent quality maintain kori tai fixed price. Special occasion e offers dii — follow korte paren. | Kon product e interested? | YES |
+| OBJ-003 | quality | quality kemon, fabric kemon, material, durability | 100% premium cotton/polyester blend use kori. Wash test e color fade hoy na. | Ki product dekhte chan? | YES |
+| OBJ-004 | trust | original, naki copy, real, fake, trust | Amader sob product original branded. Photo te jeta dekhen actual product tai paben. | Kono specific product niye jante chan? | YES |
+| OBJ-005 | delivery | delivery te problem, damaged delivery, delivery trust | Amra carefully packaging kori. Problem hole 48 ghontar moddhe replace kore dii. | Order korte chailen ki? | YES |
+
+### Rules for Objection Handling
+
+1. **Never invent discounts** — only mention discounts if your shop actually offers them
+2. **Be warm, not defensive** — acknowledge the concern, then explain value
+3. **Always ask ONE follow-up** — keeps the conversation moving
+4. **Budget alternatives** — if price objection, offer to show cheaper options
+5. **Trust building** — mention quality guarantees, return policy, real photos
+
+### Tips
+
+- Add objections in the language your customers most commonly use
+- The bot detects language and adapts, so Banglish responses work for all styles
+- Update responses based on what actually convinces your customers
+- Set Active = "NO" for seasonal objection responses instead of deleting
+
+---
+
+## Optional Products Tab Columns (v5 Enhanced)
+
+v5 supports these **optional** columns in your existing Products tab. Add them if you want enhanced features:
+
+| Column | Purpose | Example |
+|--------|---------|---------|
+| **Occasion_Tags** | What occasion it suits (comma-separated) | eid, party, casual |
+| **Style_Tags** | Style descriptors | stylish, premium, minimal, oversized |
+| **Is_Featured** | Featured product boost in search | YES |
+| **Stock_Qty** | Exact stock count (enables "Limited stock!" warning) | 3 |
+| **Discount_Price** | Discounted price if on sale | 1499 |
+| **Offer_Text** | Sale text to show | Eid Special 20% off |
+| **Gender** | Target gender | male, female, unisex |
+
+These columns are **optional** — if missing, v5 works fine with your existing Products columns.
