@@ -6,6 +6,8 @@ This is your **step-by-step checklist** to build the entire chatbot system. Foll
 
 **Estimated total time:** 3-5 hours (for a complete beginner)
 
+> **Fast-Track Option (v4):** If you want a working Messenger chatbot immediately, import `n8n-messenger-hybrid-ai-v4.json` and follow `messenger-hybrid-v4-import-instructions.md`. You can be live in ~30 minutes. The tasks below are the manual learning path.
+
 **Rule:** Complete each task fully before moving to the next one. Test as you go!
 
 ---

@@ -21,6 +21,7 @@ This is a **chatbot system** for a clothing brand. It automatically answers cust
 | 4 | **Draft Order Creation** | Creates a new order and saves it to Google Sheets |
 | 5 | **Order Tracking** | Looks up order status from Google Sheets |
 | 6 | **Human Support Handoff** | Connects the customer to a real person when the bot cannot help |
+| 7 | **Style Recommendations** | Gives outfit and styling advice based on your catalog |
 
 ---
 
@@ -46,6 +47,8 @@ You start by building the logic first, then connect your preferred channel later
 | `n8n-workflow-plan.md` | Which n8n nodes you need and how they connect |
 | `chatbot-branching-logic.md` | How the chatbot decides what to do with each message |
 | `build-tasks.md` | Step-by-step tasks to build everything |
+| `n8n-messenger-hybrid-ai-v4.json` | **Importable n8n workflow** - Messenger + AI hybrid (v4) |
+| `messenger-hybrid-v4-import-instructions.md` | Setup guide for importing and configuring the v4 workflow |
 
 ---
 
@@ -61,19 +64,20 @@ You start by building the logic first, then connect your preferred channel later
 ## How To Use This Plan
 
 1. Read this README first (you are here!)
-2. Set up your Google Sheets using `google-sheets-structure.md`
-3. Understand the chatbot logic in `chatbot-branching-logic.md`
-4. Review the n8n plan in `n8n-workflow-plan.md`
-5. Follow the tasks in `build-tasks.md` to build it step by step
+2. **Fastest path:** Import `n8n-messenger-hybrid-ai-v4.json` into n8n and follow `messenger-hybrid-v4-import-instructions.md`
+3. **Learning path:** Set up Google Sheets using `google-sheets-structure.md`, then follow `build-tasks.md` step by step
+4. Understand the chatbot logic in `chatbot-branching-logic.md`
+5. Review the full architecture in `n8n-workflow-plan.md`
 
 ---
 
 ## Important Notes
 
-- This repository contains the **planning documents only**
-- The actual n8n workflow will be built later following these plans
-- No API keys, passwords, or private information are stored here
+- This repository contains **planning documents** and a **ready-to-import n8n workflow** (v4)
+- The v4 workflow (`n8n-messenger-hybrid-ai-v4.json`) can be imported directly into n8n
+- No API keys, passwords, or private information are stored here (only placeholders)
 - All data is stored in YOUR Google Sheets (you control everything)
+- Follow `messenger-hybrid-v4-import-instructions.md` for the fastest path to a working chatbot
 
 ---
 

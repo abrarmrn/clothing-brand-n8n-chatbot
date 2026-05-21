@@ -23,22 +23,29 @@ You connect nodes together with lines (called "connections") to build the full w
 
 ## Workflow Architecture (The Big Picture)
 
+> **Note:** The v4 implementation (`n8n-messenger-hybrid-ai-v4.json`) provides a ready-to-import version of this architecture targeting Facebook Messenger with AI classification. See `messenger-hybrid-v4-import-instructions.md` for setup.
+
 Here is the flow from start to finish:
 
 ```
-Customer sends message
+Customer sends message (via Messenger webhook)
         |
         v
-[1. Chat Trigger] - Receives the message
+[1. Webhook Trigger] - Receives the message + ACK 200
         |
         v
-[2. Message Classifier] - Decides what type of message it is
+[1b. Extract & Dedup] - Parse payload, check message.mid for duplicates
+        |
+        v
+[2. AI Classifier] - Decides what type of message it is (GPT-4o-mini)
         |
         +--> Simple greeting/thanks --> [3. Direct Reply]
         |
         +--> Product question -------> [4. Product Lookup] --> [5. Format & Reply]
         |
         +--> FAQ question -----------> [6. FAQ Lookup] --> [7. Format & Reply]
+        |
+        +--> Style/outfit advice ----> [7b. Style Recommendation]
         |
         +--> Wants to order ---------> [8. Collect Order Info] --> [9. Save Order] --> [10. Confirm Reply]
         |
@@ -47,6 +54,9 @@ Customer sends message
         +--> Needs human help -------> [13. Create Ticket] --> [14. Handoff Reply]
         |
         +--> Unknown/unclear --------> [15. Fallback Reply]
+        |
+        v
+[SINGLE SEND NODE] - All branches output { replyText, senderId } → Messenger Send API
 ```
 
 ---

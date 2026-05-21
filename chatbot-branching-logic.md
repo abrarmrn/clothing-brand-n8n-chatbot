@@ -6,7 +6,7 @@ This document explains **how the chatbot decides what to do** when a customer se
 
 ---
 
-## The 6 Branches
+## The 7 Branches (+ Fallback)
 
 Every customer message goes to **one** of these branches:
 
@@ -18,6 +18,7 @@ Every customer message goes to **one** of these branches:
 | 4 | Draft Order Creation | Customer wants to buy something |
 | 5 | Order Tracking | Customer wants to check their order status |
 | 6 | Human Support Handoff | Customer needs a real person |
+| 7 | Style Recommendation | Customer wants outfit/styling advice |
 
 ---
 
@@ -33,6 +34,11 @@ Message arrives
     v
 Does it contain order tracking keywords?
     YES --> Branch 5: Order Tracking
+    NO  --> continue
+    |
+    v
+Does it contain style/outfit/recommendation keywords?
+    YES --> Branch 7: Style Recommendation
     NO  --> continue
     |
     v
@@ -64,7 +70,7 @@ Is it a simple greeting/thanks/goodbye?
 Fallback: Send menu of options
 ```
 
-**Why this order?** More specific intents (tracking, ordering) are checked first. Greetings are checked last because phrases like "Hi, I want to track my order" should go to tracking, not be treated as just a greeting.
+**Why this order?** More specific intents (tracking, style) are checked first. Style is checked BEFORE ordering because "What should I wear to a party?" is style advice, not a purchase intent. Greetings are checked last because phrases like "Hi, I want to track my order" should go to tracking, not be treated as just a greeting.
 
 ---
 
@@ -421,6 +427,56 @@ Would you like to:
 
 ---
 
+## Branch 7: Style Recommendation (NEW in v4)
+
+### Purpose
+Provide outfit and styling advice based on the customer's needs, occasion, or preferences.
+
+### Trigger Keywords
+
+| Category | Keywords/Phrases |
+|----------|-----------------|
+| Style advice | style, outfit, what to wear, what goes with, how to style, look, fashion |
+| Occasion | party, date, wedding, interview, casual, work, formal, weekend, brunch |
+| Matching | pair with, match, combine, coordinate, goes well with, complement |
+| Recommendations | recommend, suggest, advice, tips, ideas, inspiration |
+
+### Example Messages
+
+| Customer Says | Bot Action |
+|--------------|------------|
+| "What should I wear to a party?" | Suggest occasion-appropriate outfits from catalog |
+| "What goes with black jeans?" | Suggest tops/accessories that pair well |
+| "Can you recommend a casual weekend outfit?" | Suggest relaxed outfit combinations |
+| "How do I style a hoodie?" | Suggest layering and pairing options |
+| "I need outfit ideas for a job interview" | Suggest professional-looking combinations |
+
+### Reply Logic
+
+**Standard style response:**
+```
+Great question! Here are some styling ideas:
+
+Based on your request for [occasion/item]:
+
+1. [Outfit suggestion 1 - using products from catalog]
+2. [Outfit suggestion 2 - using products from catalog]
+3. [Outfit suggestion 3 - mix and match]
+
+Would you like to:
+- See more options?
+- Order any of these items?
+- Get advice for a different occasion?
+```
+
+### Rules
+- Always reference actual products from the catalog when possible
+- If no products match, give general style advice and mention what IS available
+- Style intent takes priority over order_create (asking "what should I wear" is advice, not buying)
+- If the customer says "I want that" after a style suggestion, route their next message to order_create
+
+---
+
 ## Branch 6: Human Support Handoff
 
 ### Purpose
@@ -583,12 +639,13 @@ Use a **Switch** node with these conditions:
 Example Switch conditions (checked in order):
 ```
 1. Message contains "track" OR "where is my order" OR "ORD-" → Branch 5
-2. Message contains "buy" OR "order" OR "purchase" OR "I want" → Branch 4  
-3. Message contains "speak to" OR "human" OR "help me" OR frustrated language → Branch 6
-4. Message contains product keywords (t-shirt, jeans, hoodie, etc.) → Branch 2
-5. Message contains FAQ keywords (shipping, return, size, payment) → Branch 3
-6. Message contains greeting keywords (hi, hello, thanks, bye) → Branch 1
-7. Default/else → Fallback
+2. Message contains "style" OR "outfit" OR "what to wear" OR "goes with" OR "recommend" → Branch 7
+3. Message contains "buy" OR "order" OR "purchase" OR "I want" → Branch 4  
+4. Message contains "speak to" OR "human" OR "help me" OR frustrated language → Branch 6
+5. Message contains product keywords (t-shirt, jeans, hoodie, etc.) → Branch 2
+6. Message contains FAQ keywords (shipping, return, size, payment) → Branch 3
+7. Message contains greeting keywords (hi, hello, thanks, bye) → Branch 1
+8. Default/else → Fallback
 ```
 
 ### How To Set Up With AI (Easier but requires API key)
@@ -599,14 +656,17 @@ Use an **AI Agent** node or **OpenAI** node with this prompt:
 Classify the following customer message into exactly one category.
 Return ONLY the category name, nothing else.
 
-Categories:
-- greeting (simple hi, thanks, bye, ok)
+Categories (in priority order):
+- order_track (asking about order status, delivery, tracking, mentions ORD- number)
+- style_inquiry (asking for outfit advice, style recommendations, what goes with X, occasion-based suggestions)
+- order_create (wants to buy/order something specific)
+- human_support (wants a real person, is frustrated, complex issue)
 - product_inquiry (asking about products, browsing, availability)
 - faq (questions about shipping, returns, sizing, payment, policies)
-- order_create (wants to buy/order something)
-- order_track (asking about order status, delivery, tracking)
-- human_support (wants a real person, is frustrated, complex issue)
+- greeting (simple hi, thanks, bye, ok)
 - unknown (cannot determine intent)
+
+IMPORTANT: style_inquiry is checked BEFORE order_create. If the message asks for style advice or recommendations (even if it mentions products), classify as style_inquiry.
 
 Customer message: "{customer_message}"
 ```
@@ -618,9 +678,10 @@ Customer message: "{customer_message}"
 | If the message is about... | Go to Branch | Priority in checking |
 |---------------------------|-------------|---------------------|
 | Tracking an existing order | 5 - Order Tracking | 1st (most specific) |
-| Buying/ordering a product | 4 - Draft Order | 2nd |
-| Needing a real human | 6 - Human Handoff | 3rd |
-| Asking about products/browsing | 2 - Product Lookup | 4th |
-| General questions (shipping, returns, etc.) | 3 - FAQ | 5th |
-| Simple greeting/thanks/bye | 1 - Direct Reply | 6th |
+| Style advice, outfits, what to wear | 7 - Style Recommendation | 2nd (before ordering) |
+| Buying/ordering a product | 4 - Draft Order | 3rd |
+| Needing a real human | 6 - Human Handoff | 4th |
+| Asking about products/browsing | 2 - Product Lookup | 5th |
+| General questions (shipping, returns, etc.) | 3 - FAQ | 6th |
+| Simple greeting/thanks/bye | 1 - Direct Reply | 7th |
 | Cannot determine | Fallback | Last resort |
