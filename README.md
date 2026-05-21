@@ -12,7 +12,7 @@ This is a **Facebook Messenger chatbot** for a clothing brand. Customers message
 
 ---
 
-## Current Status: v5 — Stable Upgrade
+## Current Status: v6 — Voice + Short Replies
 
 This project is built incrementally:
 
@@ -22,7 +22,8 @@ This project is built incrementally:
 | **v2** | Hybrid AI — Greetings + FAQ + Products + Tracking + Support + AI Fallback | ✅ Ready (backup) |
 | **v3** | Fixed AI + Language Detection + Telegram Alerts + BD Brand | ✅ Ready (backup) |
 | **v4** | Style routing + message.mid dedup + canonical output (experimental) | ✅ Ready (backup) |
-| **v5** | Stable upgrade from v3: style routing, dedup, memory, typo normalization, size guide, objection handling, budget-aware search | ✅ **Latest — recommended** |
+| **v5** | Style routing, dedup, memory, typo normalization, size guide, objection handling | ✅ Ready (backup) |
+| **v6** | Voice/audio transcription, short mixed Bangla+English replies, fixed AI Agent, unclear message handling, improved memory | ✅ **Latest — recommended** |
 
 ### What v2 Does (Hybrid AI — Cost-Saving Design)
 
@@ -74,18 +75,18 @@ The chatbot uses **Facebook Messenger webhooks**, not n8n's built-in Chat Trigge
 
 ---
 
-## Quick Start (v5 — Latest)
+## Quick Start (v6 — Latest)
 
 1. Set up your Google Sheets using `google-sheets-structure.md`
 2. Add product data to Products tab + FAQ data to FAQ tab
 3. (Optional) Add Size_Guide and Sales_Objections tabs
-4. Import `n8n-messenger-hybrid-ai-v5.json` into n8n
-5. Follow `messenger-hybrid-v5-import-instructions.md` to connect credentials
-6. Run tests from `messenger-hybrid-v5-test-plan.md`
+4. Import `n8n-messenger-hybrid-ai-v6.json` into n8n
+5. Follow `messenger-hybrid-v6-import-instructions.md` to connect credentials
+6. Run tests from `messenger-hybrid-v6-test-plan.md`
 7. Activate and message your Facebook Page!
 
 **Previous versions (kept as backup):**
-- v4: `n8n-messenger-hybrid-ai-v4.json` + `messenger-hybrid-v4-import-instructions.md`
+- v5: `n8n-messenger-hybrid-ai-v5.json` + `messenger-hybrid-v5-import-instructions.md`
 - v3: `n8n-messenger-hybrid-ai-v3.json` + `messenger-hybrid-v3-import-instructions.md`
 - v2: `n8n-messenger-hybrid-ai-v2.json` + `messenger-hybrid-v2-import-instructions.md`
 - v1: `n8n-messenger-product-lookup-v1.json` + `messenger-import-instructions.md`
@@ -97,9 +98,12 @@ The chatbot uses **Facebook Messenger webhooks**, not n8n's built-in Chat Trigge
 | File | What It Contains |
 |------|-----------------|
 | `README.md` | This file — project overview |
-| **`n8n-messenger-hybrid-ai-v5.json`** | **Importable n8n workflow v5** — stable upgrade with style routing, dedup, memory, size guide, objections |
-| **`messenger-hybrid-v5-import-instructions.md`** | **v5 setup guide** — credentials, sheets, testing, rollback |
-| **`messenger-hybrid-v5-test-plan.md`** | **v5 test plan** — 37 test cases across 12 categories |
+| **`n8n-messenger-hybrid-ai-v6.json`** | **Importable n8n workflow v6** — voice support, short mixed replies, fixed AI Agent |
+| **`messenger-hybrid-v6-import-instructions.md`** | **v6 setup guide** — credentials, voice, testing |
+| **`messenger-hybrid-v6-test-plan.md`** | **v6 test plan** — 40+ test cases including voice/audio |
+| `n8n-messenger-hybrid-ai-v5.json` | Workflow v5 (stable backup — rollback target) |
+| `messenger-hybrid-v5-import-instructions.md` | v5 setup guide (backup) |
+| `messenger-hybrid-v5-test-plan.md` | v5 test plan (backup) |
 | `n8n-messenger-hybrid-ai-v4.json` | Workflow v4 (experimental backup) |
 | `messenger-hybrid-v4-import-instructions.md` | v4 setup guide (backup) |
 | `n8n-messenger-hybrid-ai-v3.json` | Workflow v3 (stable backup — rollback target) |
