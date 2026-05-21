@@ -202,24 +202,78 @@
 
     {
       "parameters": {
-        "jsCode": "// Transcribe Audio v6: Download Messenger audio and transcribe via OpenAI Whisper\ntry {\n  const data = $input.first().json;\n  const audioUrl = data.audioUrl;\n  const senderPsid = data.senderPsid;\n  const messageMid = data.messageMid;\n  const timestamp = data.timestamp;\n\n  if (!audioUrl) {\n    return [{ json: { ...data, messageText: '', transcriptionFailed: true, senderPsid, messageMid, timestamp, hasAudio: true } }];\n  }\n\n  // Download audio from Facebook URL\n  const audioResponse = await fetch(audioUrl);\n  if (!audioResponse.ok) {\n    return [{ json: { ...data, messageText: '', transcriptionFailed: true, senderPsid, messageMid, timestamp, hasAudio: true } }];\n  }\n  const audioBuffer = await audioResponse.arrayBuffer();\n  const audioBlob = new Blob([audioBuffer], { type: 'audio/mp4' });\n\n  // Create form data for OpenAI\n  const formData = new FormData();\n  formData.append('file', audioBlob, 'audio.mp4');\n  formData.append('model', 'whisper-1');\n  formData.append('language', 'bn');\n\n  // Call OpenAI Whisper API\n  const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {\n    method: 'POST',\n    headers: { 'Authorization': 'Bearer OPENAI_TRANSCRIPTION_CREDENTIAL_PLACEHOLDER' },\n    body: formData\n  });\n\n  if (!whisperResponse.ok) {\n    return [{ json: { ...data, messageText: '', transcriptionFailed: true, senderPsid, messageMid, timestamp, hasAudio: true } }];\n  }\n\n  const result = await whisperResponse.json();\n  const transcribedText = result.text || '';\n\n  return [{ json: { senderPsid, messageMid, timestamp, messageText: transcribedText, hasAudio: true, transcriptionFailed: false, audioUrl } }];\n} catch (err) {\n  const data = $input.first()?.json || {};\n  return [{ json: { senderPsid: data.senderPsid || '', messageMid: data.messageMid || '', timestamp: data.timestamp || Date.now(), messageText: '', hasAudio: true, transcriptionFailed: true, audioUrl: data.audioUrl || '' } }];\n}"
+        "method": "GET",
+        "url": "={{ $json.audioUrl }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
       },
-      "id": "transcribe-audio-v6",
-      "name": "Transcribe Audio",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [880, 200]
+      "id": "download-audio-v6",
+      "name": "Download Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "FACEBOOK_PAGE_ACCESS_TOKEN_PLACEHOLDER",
+          "name": "Facebook Page Access Token"
+        }
+      },
+      "onError": "continueRegularOutput"
     },
 
     {
       "parameters": {
-        "jsCode": "// Handle Transcription Result v6: Check if transcription succeeded or failed\ntry {\n  const data = $input.first().json;\n  if (data.transcriptionFailed || !data.messageText) {\n    return [{ json: {\n      senderPsid: data.senderPsid,\n      messageMid: data.messageMid,\n      timestamp: data.timestamp,\n      messageText: '',\n      hasAudio: true,\n      skipToReply: true,\n      replyText: 'Voice ta clear \\u09AC\\u09C1\\u099D\\u09A4\\u09C7 \\u09AA\\u09BE\\u09B0\\u09BF\\u09A8\\u09BF\\u0964 Please text \\u0995\\u09B0\\u09C7 \\u09AC\\u09B2\\u09AC\\u09C7\\u09A8 \\u0985\\u09A5\\u09AC\\u09BE \\u0986\\u09AC\\u09BE\\u09B0 voice \\u09A6\\u09BF\\u09A8\\u0964',\n      intent: 'audio_failed',\n      route: 'audio_failed',\n      aiUsed: false,\n      skipSend: false,\n      needsHumanSupport: false,\n      telegramAlertText: '',\n      memoryUpdate: {},\n      confidence: 'low'\n    }}];\n  }\n  return [{ json: { senderPsid: data.senderPsid, messageMid: data.messageMid, timestamp: data.timestamp, messageText: data.messageText, hasAudio: true, skipToReply: false } }];\n} catch (err) {\n  const data = $input.first()?.json || {};\n  return [{ json: { senderPsid: data.senderPsid || '', messageMid: data.messageMid || '', timestamp: data.timestamp || Date.now(), messageText: '', hasAudio: true, skipToReply: true, replyText: 'Voice message process \\u0995\\u09B0\\u09A4\\u09C7 problem \\u09B9\\u09AF\\u09BC\\u09C7\\u099B\\u09C7\\u0964 Text \\u0995\\u09B0\\u09C7 \\u09AC\\u09B2\\u09C1\\u09A8\\u0964', intent: 'audio_error', route: 'audio_error', aiUsed: false, skipSend: false, needsHumanSupport: false, telegramAlertText: '', memoryUpdate: {}, confidence: 'low' } }];\n}"
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "file",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "transcribe-audio-v6",
+      "name": "Transcribe Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OPENAI_TRANSCRIPTION_CREDENTIAL_PLACEHOLDER",
+          "name": "OpenAI Transcription Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Handle Transcription Result v6: Extract text from Whisper response or handle failure\ntry {\n  const data = $input.first().json;\n  const prevData = $('Has Audio?').first().json;\n  const senderPsid = prevData.senderPsid || '';\n  const messageMid = prevData.messageMid || '';\n  const timestamp = prevData.timestamp || Date.now();\n  const audioUrl = prevData.audioUrl || '';\n\n  // Debug fields\n  const debug = {\n    audioDetected: true,\n    audioUrlFound: !!audioUrl,\n    audioDownloaded: false,\n    transcriptionText: '',\n    transcriptionError: ''\n  };\n\n  // Check if Whisper returned a text field (successful transcription)\n  const transcribedText = data.text || '';\n\n  if (transcribedText && transcribedText.length > 0) {\n    debug.audioDownloaded = true;\n    debug.transcriptionText = transcribedText;\n    return [{ json: {\n      senderPsid,\n      messageMid,\n      timestamp,\n      messageText: transcribedText,\n      hasAudio: true,\n      skipToReply: false,\n      ...debug\n    }}];\n  }\n\n  // Check for error responses\n  const errorMsg = data.error?.message || data.message || 'No transcription text returned';\n  debug.transcriptionError = errorMsg;\n\n  // Check if download itself failed (binary data not present = download failed)\n  if (data.statusCode && data.statusCode >= 400) {\n    debug.transcriptionError = `HTTP ${data.statusCode}: ${errorMsg}`;\n  }\n\n  // Transcription failed\n  return [{ json: {\n    senderPsid,\n    messageMid,\n    timestamp,\n    messageText: '',\n    hasAudio: true,\n    skipToReply: true,\n    replyText: 'Voice ta clear \\u09AC\\u09C1\\u099D\\u09A4\\u09C7 \\u09AA\\u09BE\\u09B0\\u09BF\\u09A8\\u09BF\\u0964 Please text \\u0995\\u09B0\\u09C7 \\u09AC\\u09B2\\u09AC\\u09C7\\u09A8 \\u0985\\u09A5\\u09AC\\u09BE \\u0986\\u09AC\\u09BE\\u09B0 voice \\u09A6\\u09BF\\u09A8\\u0964',\n    intent: 'audio_failed',\n    route: 'audio_failed',\n    aiUsed: false,\n    skipSend: false,\n    needsHumanSupport: false,\n    telegramAlertText: '',\n    memoryUpdate: {},\n    confidence: 'low',\n    ...debug\n  }}];\n} catch (err) {\n  const prevData = $('Has Audio?').first()?.json || {};\n  return [{ json: {\n    senderPsid: prevData.senderPsid || '',\n    messageMid: prevData.messageMid || '',\n    timestamp: prevData.timestamp || Date.now(),\n    messageText: '',\n    hasAudio: true,\n    skipToReply: true,\n    replyText: 'Voice message process \\u0995\\u09B0\\u09A4\\u09C7 problem \\u09B9\\u09AF\\u09BC\\u09C7\\u099B\\u09C7\\u0964 Text \\u0995\\u09B0\\u09C7 \\u09AC\\u09B2\\u09C1\\u09A8\\u0964',\n    intent: 'audio_error',\n    route: 'audio_error',\n    aiUsed: false,\n    skipSend: false,\n    needsHumanSupport: false,\n    telegramAlertText: '',\n    memoryUpdate: {},\n    confidence: 'low',\n    audioDetected: true,\n    audioUrlFound: !!prevData.audioUrl,\n    audioDownloaded: false,\n    transcriptionText: '',\n    transcriptionError: err.message\n  }}];\n}"
       },
       "id": "handle-transcription-v6",
       "name": "Handle Transcription Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1060, 200]
+      "position": [1200, 200]
     },
 
     {
@@ -696,7 +750,7 @@
       "main": [
         [
           {
-            "node": "Transcribe Audio",
+            "node": "Download Audio",
             "type": "main",
             "index": 0
           }
@@ -704,6 +758,17 @@
         [
           {
             "node": "Load Memory + Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribe Audio",
             "type": "main",
             "index": 0
           }
