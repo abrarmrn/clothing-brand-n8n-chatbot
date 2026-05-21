@@ -1,0 +1,942 @@
+{
+  "name": "Messenger Hybrid AI v6 (Voice + Short Replies)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "get-webhook-v6",
+      "name": "GET Webhook (Verify)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 160],
+      "webhookId": "messenger-get-verify-v6"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-mode",
+              "leftValue": "={{ $json.query['hub.mode'] }}",
+              "rightValue": "subscribe",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-token",
+              "leftValue": "={{ $json.query['hub.verify_token'] }}",
+              "rightValue": "CHANGE_ME_VERIFY_TOKEN",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "verify-check-v6",
+      "name": "Verify Token Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 160]
+    },
+
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('GET Webhook (Verify)').item.json.query['hub.challenge'] }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-challenge-v6",
+      "name": "Respond with Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 80]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Forbidden",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "respond-403-v6",
+      "name": "Respond 403",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 240]
+    },
+
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "post-webhook-v6",
+      "name": "POST Webhook (Messages)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 520],
+      "webhookId": "messenger-post-messages-v6"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "EVENT_RECEIVED",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-200-v6",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [440, 420]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Extract + Dedup v6: Handles text AND voice/audio messages\ntry {\n  const body = $input.first().json.body;\n  const entry = body?.entry?.[0];\n  const messaging = entry?.messaging?.[0];\n\n  if (!messaging) return [{ json: { skip: true, skipSend: true, reason: 'no_messaging_event' } }];\n  if (messaging.delivery) return [{ json: { skip: true, skipSend: true, reason: 'delivery_receipt' } }];\n  if (messaging.read) return [{ json: { skip: true, skipSend: true, reason: 'read_receipt' } }];\n  if (messaging.message?.is_echo) return [{ json: { skip: true, skipSend: true, reason: 'echo_message' } }];\n\n  const senderPsid = messaging.sender.id;\n  const messageMid = messaging.message?.mid;\n  const timestamp = messaging.timestamp;\n\n  // Check for audio/voice attachment\n  let hasAudio = false;\n  let audioUrl = '';\n  const attachments = messaging.message?.attachments || [];\n  for (const att of attachments) {\n    if (att.type === 'audio') {\n      hasAudio = true;\n      audioUrl = att.payload?.url || '';\n      break;\n    }\n  }\n\n  // Check for text\n  const messageText = messaging.message?.text || '';\n\n  // Skip if neither text nor audio\n  if (!messageText && !hasAudio) {\n    return [{ json: { skip: true, skipSend: true, reason: 'no_text_or_audio' } }];\n  }\n\n  // Deduplication using workflow static data\n  const staticData = $getWorkflowStaticData('global');\n  if (!staticData.processedMids) staticData.processedMids = {};\n  const now = Date.now();\n  const fiveMinutes = 5 * 60 * 1000;\n\n  // Clean old entries\n  const midKeys = Object.keys(staticData.processedMids);\n  if (midKeys.length > 500) {\n    const sorted = midKeys.sort((a, b) => staticData.processedMids[a] - staticData.processedMids[b]);\n    for (const key of sorted.slice(0, midKeys.length - 400)) { delete staticData.processedMids[key]; }\n  }\n  for (const key of Object.keys(staticData.processedMids)) {\n    if (now - staticData.processedMids[key] > fiveMinutes) { delete staticData.processedMids[key]; }\n  }\n\n  // Check duplicate\n  if (messageMid && staticData.processedMids[messageMid]) {\n    return [{ json: { skip: false, skipSend: true, reason: 'duplicate', senderPsid, messageText, messageMid, timestamp } }];\n  }\n  if (messageMid) staticData.processedMids[messageMid] = now;\n\n  return [{ json: { skip: false, skipSend: false, senderPsid, messageText, messageMid, timestamp, hasAudio, audioUrl } }];\n} catch (err) {\n  return [{ json: { skip: true, skipSend: true, reason: 'extract_error: ' + err.message } }];\n}"
+      },
+      "id": "extract-dedup-v6",
+      "name": "Extract + Dedup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 520]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-not-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": "={{false}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-not-dup",
+              "leftValue": "={{ $json.skipSend }}",
+              "rightValue": "={{true}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-valid-not-dup-v6",
+      "name": "Is Valid + Not Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 520]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-audio",
+              "leftValue": "={{ $json.hasAudio }}",
+              "rightValue": "={{true}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-audio-v6",
+      "name": "Has Audio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1060, 350]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Transcribe Audio v6: Download Messenger audio and transcribe via OpenAI Whisper\ntry {\n  const data = $input.first().json;\n  const audioUrl = data.audioUrl;\n  const senderPsid = data.senderPsid;\n  const messageMid = data.messageMid;\n  const timestamp = data.timestamp;\n\n  if (!audioUrl) {\n    return [{ json: { ...data, messageText: '', transcriptionFailed: true, senderPsid, messageMid, timestamp, hasAudio: true } }];\n  }\n\n  // Download audio from Facebook URL\n  const audioResponse = await fetch(audioUrl);\n  if (!audioResponse.ok) {\n    return [{ json: { ...data, messageText: '', transcriptionFailed: true, senderPsid, messageMid, timestamp, hasAudio: true } }];\n  }\n  const audioBuffer = await audioResponse.arrayBuffer();\n  const audioBlob = new Blob([audioBuffer], { type: 'audio/mp4' });\n\n  // Create form data for OpenAI\n  const formData = new FormData();\n  formData.append('file', audioBlob, 'audio.mp4');\n  formData.append('model', 'whisper-1');\n  formData.append('language', 'bn');\n\n  // Call OpenAI Whisper API\n  const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {\n    method: 'POST',\n    headers: { 'Authorization': 'Bearer OPENAI_TRANSCRIPTION_CREDENTIAL_PLACEHOLDER' },\n    body: formData\n  });\n\n  if (!whisperResponse.ok) {\n    return [{ json: { ...data, messageText: '', transcriptionFailed: true, senderPsid, messageMid, timestamp, hasAudio: true } }];\n  }\n\n  const result = await whisperResponse.json();\n  const transcribedText = result.text || '';\n\n  return [{ json: { senderPsid, messageMid, timestamp, messageText: transcribedText, hasAudio: true, transcriptionFailed: false, audioUrl } }];\n} catch (err) {\n  const data = $input.first()?.json || {};\n  return [{ json: { senderPsid: data.senderPsid || '', messageMid: data.messageMid || '', timestamp: data.timestamp || Date.now(), messageText: '', hasAudio: true, transcriptionFailed: true, audioUrl: data.audioUrl || '' } }];\n}"
+      },
+      "id": "transcribe-audio-v6",
+      "name": "Transcribe Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 200]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Handle Transcription Result v6: Check if transcription succeeded or failed\ntry {\n  const data = $input.first().json;\n  if (data.transcriptionFailed || !data.messageText) {\n    return [{ json: {\n      senderPsid: data.senderPsid,\n      messageMid: data.messageMid,\n      timestamp: data.timestamp,\n      messageText: '',\n      hasAudio: true,\n      skipToReply: true,\n      replyText: 'Voice ta clear \\u09AC\\u09C1\\u099D\\u09A4\\u09C7 \\u09AA\\u09BE\\u09B0\\u09BF\\u09A8\\u09BF\\u0964 Please text \\u0995\\u09B0\\u09C7 \\u09AC\\u09B2\\u09AC\\u09C7\\u09A8 \\u0985\\u09A5\\u09AC\\u09BE \\u0986\\u09AC\\u09BE\\u09B0 voice \\u09A6\\u09BF\\u09A8\\u0964',\n      intent: 'audio_failed',\n      route: 'audio_failed',\n      aiUsed: false,\n      skipSend: false,\n      needsHumanSupport: false,\n      telegramAlertText: '',\n      memoryUpdate: {},\n      confidence: 'low'\n    }}];\n  }\n  return [{ json: { senderPsid: data.senderPsid, messageMid: data.messageMid, timestamp: data.timestamp, messageText: data.messageText, hasAudio: true, skipToReply: false } }];\n} catch (err) {\n  const data = $input.first()?.json || {};\n  return [{ json: { senderPsid: data.senderPsid || '', messageMid: data.messageMid || '', timestamp: data.timestamp || Date.now(), messageText: '', hasAudio: true, skipToReply: true, replyText: 'Voice message process \\u0995\\u09B0\\u09A4\\u09C7 problem \\u09B9\\u09AF\\u09BC\\u09C7\\u099B\\u09C7\\u0964 Text \\u0995\\u09B0\\u09C7 \\u09AC\\u09B2\\u09C1\\u09A8\\u0964', intent: 'audio_error', route: 'audio_error', aiUsed: false, skipSend: false, needsHumanSupport: false, telegramAlertText: '', memoryUpdate: {}, confidence: 'low' } }];\n}"
+      },
+      "id": "handle-transcription-v6",
+      "name": "Handle Transcription Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 200]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-skip-to-reply",
+              "leftValue": "={{ $json.skipToReply }}",
+              "rightValue": "={{true}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "skip-to-reply-v6",
+      "name": "Skip To Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 200]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Load Memory + Normalize v6: Typo correction, language detection, entity extraction\ntry {\n  const input = $input.first().json;\n  const senderPsid = input.senderPsid;\n  const messageText = input.messageText;\n  const messageMid = input.messageMid;\n  const timestamp = input.timestamp;\n  const hasAudio = input.hasAudio || false;\n\n  // Load memory from workflow static data\n  const staticData = $getWorkflowStaticData('global');\n  const memKey = `mem_${senderPsid}`;\n  const memory = staticData[memKey] || {};\n\n  // Typo normalization map\n  const typoMap = {\n    'delivry': 'delivery', 'dilevary': 'delivery', 'delevery': 'delivery',\n    'retrn': 'return', 'retun': 'return',\n    'exchng': 'exchange', 'excange': 'exchange',\n    'tshart': 't-shirt', 't-shart': 't-shirt', 't shirt': 't-shirt',\n    'hudie': 'hoodie', 'hudi': 'hoodie',\n    'jins': 'jeans', 'jeens': 'jeans',\n    'prize': 'price',\n    'availble': 'available', 'avilable': 'available',\n    'dhaka city': 'inside_dhaka', 'inside dhaka': 'inside_dhaka', 'dhakar vitore': 'inside_dhaka',\n    'baire dhaka': 'outside_dhaka', 'outside dhaka': 'outside_dhaka', 'dhakar baire': 'outside_dhaka'\n  };\n\n  let normalizedMessage = messageText.toLowerCase().trim();\n  for (const [typo, fix] of Object.entries(typoMap)) {\n    normalizedMessage = normalizedMessage.replace(new RegExp(typo, 'gi'), fix);\n  }\n\n  // Language detection\n  const banglaRegex = /[\\u0980-\\u09FF]/;\n  const banglishWords = ['ki','kemon','ache','chai','korbo','hobe','diben','koto','dam','poro','eid','salam','bhai','apa','vai','dada','onek','sundor','valo','kobe','pathaben','lagbe','dorkar','apni','ami','kori','korte','bolte','jante','dekhte','kinbo','nibo'];\n  let languageStyle = 'english';\n  if (banglaRegex.test(messageText)) {\n    languageStyle = 'bangla';\n  } else {\n    const words = normalizedMessage.split(/\\s+/);\n    if (words.some(w => banglishWords.includes(w)) || /\\b(er|ta|tay|te|gulo|gulor)\\b/.test(normalizedMessage)) {\n      languageStyle = 'banglish';\n    }\n  }\n\n  // Entity extraction\n  let extractedBudget = null;\n  const budgetMatch = normalizedMessage.match(/(\\d+)\\s*(bdt|taka|tk|\\u09F3)|under\\s*(\\d+)|(\\d+)\\s*er\\s*moddhe/i);\n  if (budgetMatch) {\n    extractedBudget = parseInt(budgetMatch[1] || budgetMatch[3] || budgetMatch[4]);\n  }\n\n  let extractedSize = null;\n  const sizeMatch = normalizedMessage.match(/\\b(xxl|xl|l|m|s)\\b/i);\n  const heightMatch = normalizedMessage.match(/(\\d+)\\s*(feet|ft|foot|\\')|(\\d+)\\s*(inch|in|\\\")/i);\n  const weightMatch = normalizedMessage.match(/(\\d+)\\s*(kg|kilo)/i);\n  if (sizeMatch) extractedSize = sizeMatch[1].toUpperCase();\n  else if (heightMatch || weightMatch) extractedSize = 'needs_calculation';\n\n  let extractedColor = null;\n  const colors = ['black','white','red','blue','green','navy','grey','gray','maroon','olive','beige','cream','pink','yellow','orange','purple','brown','kalo','sada','lal','nil','sobuj'];\n  for (const c of colors) {\n    if (normalizedMessage.includes(c)) { extractedColor = c; break; }\n  }\n\n  let extractedOccasion = null;\n  const occasions = ['eid','party','office','casual','wedding','gift','puja','concert','date','interview','formal'];\n  for (const o of occasions) {\n    if (normalizedMessage.includes(o)) { extractedOccasion = o; break; }\n  }\n\n  return [{ json: {\n    senderPsid,\n    messageMid,\n    customerMessage: messageText,\n    normalizedMessage,\n    languageStyle,\n    extractedBudget,\n    extractedSize,\n    extractedColor,\n    extractedOccasion,\n    memory,\n    timestamp,\n    hasAudio\n  }}];\n} catch (err) {\n  const input = $input.first()?.json || {};\n  return [{ json: {\n    senderPsid: input.senderPsid || '',\n    messageMid: input.messageMid || '',\n    customerMessage: input.messageText || '',\n    normalizedMessage: (input.messageText || '').toLowerCase(),\n    languageStyle: 'english',\n    extractedBudget: null,\n    extractedSize: null,\n    extractedColor: null,\n    extractedOccasion: null,\n    memory: {},\n    timestamp: input.timestamp || Date.now(),\n    hasAudio: input.hasAudio || false\n  }}];\n}"
+      },
+      "id": "load-memory-normalize-v6",
+      "name": "Load Memory + Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 520]
+    },
+
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEETS_DOCUMENT_ID_PLACEHOLDER",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "FAQ",
+          "mode": "list",
+          "cachedResultName": "FAQ"
+        },
+        "options": {}
+      },
+      "id": "read-faq-v6",
+      "name": "Read FAQ Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1600, 520],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_PLACEHOLDER",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEETS_DOCUMENT_ID_PLACEHOLDER",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Products",
+          "mode": "list",
+          "cachedResultName": "Products"
+        },
+        "options": {}
+      },
+      "id": "read-products-v6",
+      "name": "Read Products Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1740, 520],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_PLACEHOLDER",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEETS_DOCUMENT_ID_PLACEHOLDER",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Size_Guide",
+          "mode": "list",
+          "cachedResultName": "Size_Guide"
+        },
+        "options": {}
+      },
+      "id": "read-sizeguide-v6",
+      "name": "Read Size Guide",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1880, 520],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_PLACEHOLDER",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEETS_DOCUMENT_ID_PLACEHOLDER",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sales_Objections",
+          "mode": "list",
+          "cachedResultName": "Sales_Objections"
+        },
+        "options": {}
+      },
+      "id": "read-objections-v6",
+      "name": "Read Sales Objections",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2020, 520],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_PLACEHOLDER",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Decision Engine v6: Main routing logic with priority-based intent matching, short mixed Bangla+English replies\ntry {\n  const normalizedData = $('Load Memory + Normalize').first().json;\n  const { senderPsid, messageMid, customerMessage, normalizedMessage, languageStyle, extractedBudget, extractedSize, extractedColor, extractedOccasion, memory } = normalizedData;\n\n  const faqRows = $('Read FAQ Sheet').all().map(i => i.json);\n  const productRows = $('Read Products Sheet').all().map(i => i.json);\n  const sizeGuideRows = $('Read Size Guide').all().map(i => i.json);\n  const objectionRows = $('Read Sales Objections').all().map(i => i.json);\n\n  const words = normalizedMessage.split(/\\s+/);\n  const wordCount = words.length;\n  const canonical = (extra) => ({ senderPsid, messageMid, customerMessage, normalizedMessage, languageStyle, extractedBudget, extractedSize, extractedColor, extractedOccasion, memory, needsHumanSupport: false, telegramAlertText: '', memoryUpdate: {}, skipSend: false, aiUsed: false, confidence: 'high', ...extra });\n\n  // --- a) GREETING / THANKS / BYE (words<=4) ---\n  const greetings = ['assalamualaikum','salam','walaikum','hi','hello','hey','hola','yo','sup','kemon','kemn'];\n  const thanksWords = ['thanks','thank','thankyou','thx','jazakallah','shukria','dhonnobad'];\n  const byeWords = ['bye','goodbye','later','seeya','cya','allah hafez','khuda hafez'];\n  if (wordCount <= 4) {\n    if (words.some(w => greetings.includes(w))) {\n      const reply = languageStyle === 'english' ? 'Hello! What are you looking for?' : 'Walaikumussalam! \\u0995\\u09BF \\u0996\\u09C1\\u0981\\u099C\\u099B\\u09C7\\u09A8 \\u0986\\u099C?';\n      return [{ json: canonical({ intent: 'greeting', replyText: reply, route: 'greeting' }) }];\n    }\n    if (words.some(w => thanksWords.includes(w))) {\n      const reply = 'Welcome! \\u0986\\u09B0 \\u0995\\u09BF\\u099B\\u09C1 \\u09B2\\u09BE\\u0997\\u09B2\\u09C7 \\u09AC\\u09B2\\u09AC\\u09C7\\u09A8\\u0964';\n      return [{ json: canonical({ intent: 'thanks', replyText: reply, route: 'thanks' }) }];\n    }\n    if (words.some(w => byeWords.includes(w))) {\n      const reply = 'Allah hafez! \\u0986\\u09AC\\u09BE\\u09B0 \\u0986\\u09B8\\u09AC\\u09C7\\u09A8\\u0964';\n      return [{ json: canonical({ intent: 'bye', replyText: reply, route: 'bye' }) }];\n    }\n  }\n\n  // --- b) HUMAN SUPPORT ---\n  const supportWords = ['human','agent','person','speak to','talk to','complaint','refund','fraud','wrong item','damaged','manush','kotha bolte chai'];\n  const angryPattern = (customerMessage === customerMessage.toUpperCase() && customerMessage.length > 10);\n  if (supportWords.some(w => normalizedMessage.includes(w)) || angryPattern) {\n    const reply = '\\u09AC\\u09C1\\u099D\\u09A4\\u09C7 \\u09AA\\u09BE\\u09B0\\u099B\\u09BF\\u0964 Team 2-4 \\u0998\\u09A8\\u09CD\\u099F\\u09BE\\u09AF\\u09BC contact \\u0995\\u09B0\\u09AC\\u09C7\\u0964';\n    const alertText = `SUPPORT REQUEST\\nPSID: ${senderPsid}\\nMessage: ${customerMessage}\\nLanguage: ${languageStyle}\\nReason: customer_requested_or_angry`;\n    return [{ json: canonical({ intent: 'human_support', replyText: reply, needsHumanSupport: true, telegramAlertText: alertText, route: 'human_support' }) }];\n  }\n\n  // --- c) ORDER TRACKING ---\n  const trackWords = ['track','tracking','where is my order','order status','delivery status','order kothay','parcel'];\n  const orderIdMatch = customerMessage.match(/ORD-[\\w-]+/i);\n  if (trackWords.some(w => normalizedMessage.includes(w)) || orderIdMatch) {\n    let reply;\n    if (orderIdMatch) {\n      const id = orderIdMatch[0].toUpperCase();\n      reply = `Order ${id} check \\u0995\\u09B0\\u099B\\u09BF\\u0964 Team update \\u09A6\\u09BF\\u09AC\\u09C7 shortly\\u0964`;\n    } else {\n      reply = 'Order number \\u099F\\u09BE \\u09A6\\u09BF\\u09A8 (ORD-YYYYMMDD-XXX format)\\u0964';\n    }\n    return [{ json: canonical({ intent: 'order_tracking', replyText: reply, route: 'order_tracking' }) }];\n  }\n\n  // --- d) STYLE/OCCASION RECOMMENDATION (BEFORE order) ---\n  const styleWords = ['stylish','style','outfit','look','recommend','suggest','ki porbo','what should i wear','eid er jonno','gift er jonno','casual look','party','office look','occasion'];\n  if (styleWords.some(w => normalizedMessage.includes(w)) || extractedOccasion) {\n    const activeProducts = productRows.filter(p => String(p.Active || '').toUpperCase() === 'YES');\n    let matched = [];\n    const occ = extractedOccasion || '';\n    for (const p of activeProducts) {\n      const tags = ((p.Occasion_Tags || '') + ' ' + (p.Style_Tags || '')).toLowerCase();\n      if (occ && tags.includes(occ)) matched.push(p);\n      else if (styleWords.some(w => tags.includes(w))) matched.push(p);\n    }\n    matched = matched.slice(0, 3);\n    let reply;\n    if (matched.length > 0) {\n      const items = matched.map((p, i) => `${i+1}. ${p.Product_Name} - \\u09F3${p.Price}`).join('\\n');\n      reply = `${items}\\n\\u0995\\u09CB\\u09A8\\u099F\\u09BE \\u09AA\\u099B\\u09A8\\u09CD\\u09A6?`;\n    } else {\n      reply = '\\u0995\\u09BF \\u09A7\\u09B0\\u09A3\\u09C7\\u09B0 look \\u0996\\u09C1\\u0981\\u099C\\u099B\\u09C7\\u09A8? Casual, formal \\u09A8\\u09BE\\u0995\\u09BF Eid special?';\n    }\n    return [{ json: canonical({ intent: 'style_recommendation', confidence: matched.length > 0 ? 'high' : 'medium', replyText: reply, route: 'style_recommendation', memoryUpdate: { lastIntent: 'style', lastOccasion: occ } }) }];\n  }\n\n  // --- e) SIZE RECOMMENDATION ---\n  const sizeWords = ['size guide','kon size','height','weight','oversized','m hobe','size chart'];\n  if (sizeWords.some(w => normalizedMessage.includes(w)) || (extractedSize && extractedSize === 'needs_calculation')) {\n    const heightM = normalizedMessage.match(/(\\d+)\\s*(?:feet|ft|foot|\\')/i);\n    const weightM = normalizedMessage.match(/(\\d+)\\s*(?:kg|kilo)/i);\n    if (heightM && weightM && sizeGuideRows.length > 0) {\n      const h = parseInt(heightM[1]);\n      const w = parseInt(weightM[1]);\n      let recommended = 'M';\n      for (const row of sizeGuideRows) {\n        const minH = parseInt(row.Min_Height_Feet || 0);\n        const maxH = parseInt(row.Max_Height_Feet || 99);\n        const minW = parseInt(row.Min_Weight_Kg || 0);\n        const maxW = parseInt(row.Max_Weight_Kg || 999);\n        if (h >= minH && h <= maxH && w >= minW && w <= maxW) { recommended = row.Size || 'M'; break; }\n      }\n      const reply = `\\u0986\\u09AA\\u09A8\\u09BE\\u09B0 \\u099C\\u09A8\\u09CD\\u09AF ${recommended} size recommend \\u0995\\u09B0\\u099B\\u09BF\\u0964 \\u0995\\u09BF product \\u09A6\\u09C7\\u0996\\u09AC\\u09C7\\u09A8?`;\n      return [{ json: canonical({ intent: 'size_recommendation', replyText: reply, route: 'size_recommendation', memoryUpdate: { lastSize: recommended } }) }];\n    } else {\n      const reply = 'Size recommend \\u0995\\u09B0\\u09A4\\u09C7 height (feet) \\u0986\\u09B0 weight (kg) \\u09AC\\u09B2\\u09C1\\u09A8\\u0964';\n      return [{ json: canonical({ intent: 'size_recommendation', confidence: 'medium', replyText: reply, route: 'size_recommendation' }) }];\n    }\n  }\n\n  // --- f) OBJECTION HANDLING ---\n  const objectionWords = ['dam beshi','last price','discount','quality kemon','fabric kemon','original','expensive','cheap'];\n  if (objectionWords.some(w => normalizedMessage.includes(w))) {\n    let matchedObj = null;\n    for (const obj of objectionRows) {\n      const keywords = (obj.Keywords || '').toLowerCase().split(',').map(k => k.trim());\n      if (keywords.some(k => normalizedMessage.includes(k))) { matchedObj = obj; break; }\n    }\n    let reply;\n    if (matchedObj && matchedObj.Response) {\n      reply = matchedObj.Response;\n    } else {\n      reply = 'Premium quality, value for money\\u0964 Budget \\u09AC\\u09B2\\u09B2\\u09C7 match \\u0995\\u09B0\\u09C7 \\u09A6\\u09C7\\u0987\\u0964';\n    }\n    return [{ json: canonical({ intent: 'objection_handling', replyText: reply, route: 'objection_handling' }) }];\n  }\n\n  // --- g) STRONG ORDER INTENT (with memory context) ---\n  const strongOrderWords = ['buy','order now','place order','confirm order','checkout','eta nibo','ami nibo','ei product ta nibo','order korte chai','book this','confirm kore din','kinbo'];\n  const weakWords = ['need','want','chai','lagbe','something','i need','i want','kichu','dekhan','suggest koren'];\n  const hasStrongOrder = strongOrderWords.some(w => normalizedMessage.includes(w));\n  const hasProductContext = memory.lastProduct || extractedColor || (extractedSize && extractedSize !== 'needs_calculation') || productRows.some(p => normalizedMessage.includes((p.Product_Name || '').toLowerCase().split(' ')[0]));\n  if (hasStrongOrder) {\n    if (hasProductContext || memory.lastProduct) {\n      const reply = '\\u09A0\\u09BF\\u0995 \\u0986\\u099B\\u09C7\\u0964 Size, colour \\u0986\\u09B0 delivery address \\u09A6\\u09BF\\u09AC\\u09C7\\u09A8?';\n      return [{ json: canonical({ intent: 'order_create', replyText: reply, route: 'order_intent', memoryUpdate: { lastIntent: 'order' } }) }];\n    } else {\n      const reply = '\\u0995\\u09CB\\u09A8 product \\u099F\\u09BE \\u09A8\\u09BF\\u09AC\\u09C7\\u09A8? Name \\u09AC\\u09B2\\u09B2\\u09C7 order start \\u0995\\u09B0\\u099B\\u09BF\\u0964';\n      return [{ json: canonical({ intent: 'order_create', confidence: 'medium', replyText: reply, route: 'order_intent' }) }];\n    }\n  }\n\n  // --- h) FAQ MATCH ---\n  const activeFaqs = faqRows.filter(f => String(f.Active || '').toUpperCase() === 'YES');\n  const filteredWords = words.filter(w => w.length > 2).filter(w => !['the','and','for','are','this','that','with','have','show','want','your','what','does','come','any','can','you','please','hello','much','how','there'].includes(w));\n  let bestFaq = null; let bestFaqScore = 0;\n  for (const faq of activeFaqs) {\n    const faqKeywords = (faq.Keywords || '').toLowerCase().split(',').map(k => k.trim());\n    const questionWords = (faq.Question || '').toLowerCase().split(/\\s+/);\n    let score = 0;\n    for (const word of filteredWords) {\n      if (faqKeywords.some(k => k.includes(word) || word.includes(k))) score += 2;\n      if (questionWords.includes(word)) score += 1;\n    }\n    if (score > bestFaqScore) { bestFaqScore = score; bestFaq = faq; }\n  }\n  if (bestFaq && bestFaqScore >= 3) {\n    let faqAnswer = bestFaq.Answer || '';\n    if (normalizedMessage.includes('inside_dhaka') && faqAnswer.includes('inside_dhaka')) {\n      const parts = faqAnswer.split(/inside_dhaka[:\\s]*/i);\n      if (parts[1]) faqAnswer = parts[1].split(/outside_dhaka|\\n/i)[0].trim();\n    }\n    return [{ json: canonical({ intent: 'faq', replyText: faqAnswer, route: 'faq_match' }) }];\n  }\n\n  // --- i) PRODUCT MATCH ---\n  const activeProducts = productRows.filter(p => String(p.Active || '').toUpperCase() === 'YES');\n  const scored = activeProducts.map(product => {\n    const searchable = [product.Product_Name||'', product.Category||'', product.Description||'', product.Size||'', product.Color||'', product.Search_Keywords||'', product.Occasion_Tags||'', product.Style_Tags||''].join(' ').toLowerCase();\n    let score = 0;\n    for (const term of filteredWords) { if (searchable.includes(term)) score++; }\n    if (String(product.Is_Featured || '').toUpperCase() === 'YES') score += 0.5;\n    if (extractedBudget && parseInt(product.Price) > extractedBudget) score -= 2;\n    return { ...product, score };\n  }).filter(p => p.score > 0);\n\n  const grouped = {};\n  for (const m of scored) {\n    const pid = m.Product_ID;\n    if (!grouped[pid]) { grouped[pid] = { Product_ID: pid, Product_Name: m.Product_Name, Price: m.Price, Currency: m.Currency||'BDT', sizes: [], colors: [], inStock: 0, topScore: 0, Stock_Qty: 999 }; }\n    if (m.score > grouped[pid].topScore) grouped[pid].topScore = m.score;\n    const qty = parseInt(m.Stock_Qty || 999);\n    if (qty < grouped[pid].Stock_Qty) grouped[pid].Stock_Qty = qty;\n    if (String(m.In_Stock || '').toUpperCase() === 'YES') {\n      grouped[pid].inStock++;\n      if (m.Size && !grouped[pid].sizes.includes(m.Size)) grouped[pid].sizes.push(m.Size);\n      if (m.Color && !grouped[pid].colors.includes(m.Color)) grouped[pid].colors.push(m.Color);\n    }\n  }\n  const results = Object.values(grouped).sort((a,b) => { if (b.inStock !== a.inStock) return b.inStock > 0 ? 1 : -1; return b.topScore - a.topScore; }).slice(0, 3);\n\n  if (results.length > 0) {\n    const items = results.map((p, i) => `${i+1}. ${p.Product_Name} - \\u09F3${p.Price} (Size: ${p.sizes.join(',') || 'N/A'})`).join('\\n');\n    const reply = `${items}\\nSize/colour \\u09AC\\u09B2\\u09B2\\u09C7 exact stock check \\u0995\\u09B0\\u09C7 \\u09A6\\u09BF\\u09A4\\u09C7 \\u09AA\\u09BE\\u09B0\\u09BF\\u0964`;\n    return [{ json: canonical({ intent: 'product_inquiry', replyText: reply, route: 'product_match', memoryUpdate: { lastIntent: 'product_browse', lastProduct: results[0].Product_Name } }) }];\n  }\n\n  // --- j) UNCLEAR MESSAGE (vague with only weak words, no specifics) ---\n  const vagueOnly = words.every(w => weakWords.includes(w) || w.length <= 2 || ['kichu','dorkar','please','eki','ektu','show','me','give','koren','den','din'].includes(w));\n  if (vagueOnly && !extractedColor && !extractedSize && !extractedOccasion && !extractedBudget && wordCount <= 6) {\n    const reply = '\\u0995\\u09BF type item \\u099A\\u09BE\\u09A8? T-shirt, hoodie, jeans \\u09A8\\u09BE\\u0995\\u09BF dress?';\n    return [{ json: canonical({ intent: 'unclear', confidence: 'medium', replyText: reply, route: 'unclear_message' }) }];\n  }\n\n  // --- k) AI FALLBACK ---\n  const categories = [...new Set(activeProducts.map(p => p.Category).filter(Boolean))].slice(0, 6).join(', ');\n  return [{ json: canonical({ intent: 'complex_question', confidence: 'low', replyText: '', route: 'ai_fallback', aiUsed: true, availableCategories: categories }) }];\n\n} catch (err) {\n  const nd = $('Load Memory + Normalize').first()?.json || {};\n  return [{ json: { senderPsid: nd.senderPsid || '', messageMid: nd.messageMid || '', customerMessage: nd.customerMessage || '', normalizedMessage: nd.normalizedMessage || '', languageStyle: nd.languageStyle || 'english', intent: 'error', confidence: 'low', replyText: 'Problem \\u09B9\\u09AF\\u09BC\\u09C7\\u099B\\u09C7\\u0964 \\\"human\\\" \\u09B2\\u09BF\\u0996\\u09C1\\u09A8, team help \\u0995\\u09B0\\u09AC\\u09C7\\u0964', needsHumanSupport: true, telegramAlertText: 'ERROR in Decision Engine: ' + err.message, memoryUpdate: {}, skipSend: false, aiUsed: false, route: 'error', extractedBudget: null, extractedSize: null, extractedColor: null, extractedOccasion: null, memory: {} } }];\n}"
+      },
+      "id": "decision-engine-v6",
+      "name": "Decision Engine v6",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 520]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ai-needed",
+              "leftValue": "={{ $json.aiUsed }}",
+              "rightValue": "={{true}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ai-needed-v6",
+      "name": "AI Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2400, 520]
+    },
+
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.customerMessage }}\n\nContext: Language={{ $json.languageStyle }}, Budget={{ $json.extractedBudget || 'N/A' }}, Occasion={{ $json.extractedOccasion || 'N/A' }}, Memory={{ JSON.stringify($json.memory || {}) }}, Categories={{ $json.availableCategories || 'T-Shirts, Jeans, Hoodies' }}",
+        "options": {
+          "systemMessage": "\u09A4\u09C1\u09AE\u09BF \u098F\u0995\u099F\u09BE BD clothing brand \u098F\u09B0 sales assistant\u0964\n\nRULES:\n- ALWAYS reply in mixed Bangla + English (like: '\u0995\u09BF \u09A7\u09B0\u09A3\u09C7\u09B0 look \u0996\u09C1\u0981\u099C\u099B\u09C7\u09A8? Casual \u09A8\u09BE\u0995\u09BF formal?')\n- MAX 2 lines. Never more than 3 lines.\n- Ask ONE short follow-up question.\n- NEVER invent price, stock, discount, delivery info.\n- NEVER write long paragraphs or explanations.\n- If unsure, say: 'Human support \u098F connect \u0995\u09B0\u09A4\u09C7 \"human\" \u09B2\u09BF\u0996\u09C1\u09A8\u0964'\n- Stay on clothing/fashion topics only.\n- Use memory context if available."
+        }
+      },
+      "id": "ai-agent-v6",
+      "name": "AI Agent (Fallback Only)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.6,
+      "position": [2600, 400]
+    },
+    {
+      "parameters": {
+        "options": {
+          "model": "gpt-4o-mini"
+        }
+      },
+      "id": "chat-model-v6",
+      "name": "Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [2620, 640],
+      "credentials": {
+        "openAiApi": {
+          "id": "AI_CHAT_MODEL_CREDENTIAL_PLACEHOLDER",
+          "name": "OpenAI account"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Prepare Final Reply v6: Enforce short replies\ntry {\n  const data = $input.first().json;\n  let replyText = '';\n  let senderPsid = data.senderPsid || '';\n\n  if (data.replyText && data.replyText.length > 0) {\n    replyText = data.replyText;\n  } else if (data.output && typeof data.output === 'string' && data.output.length > 0) {\n    replyText = data.output;\n  } else if (data.text && typeof data.text === 'string' && data.text.length > 0) {\n    replyText = data.text;\n  } else if (data.response && typeof data.response === 'string' && data.response.length > 0) {\n    replyText = data.response;\n  } else {\n    replyText = '\\u0995\\u09BF\\u099B\\u09C1 \\u09AC\\u09C1\\u099D\\u09A4\\u09C7 \\u09AA\\u09BE\\u09B0\\u09BF\\u09A8\\u09BF\\u0964 \\\"human\\\" \\u09B2\\u09BF\\u0996\\u09B2\\u09C7 team connect \\u0995\\u09B0\\u09C7 \\u09A6\\u09BF\\u09AC\\u0964';\n  }\n\n  if (!senderPsid) {\n    try { senderPsid = $('Decision Engine v6').first().json.senderPsid || ''; } catch(e) {}\n  }\n\n  // Enforce max length for Messenger\n  if (replyText.length > 1950) {\n    replyText = replyText.substring(0, 1947) + '...';\n  }\n\n  return [{ json: {\n    senderPsid,\n    replyText,\n    needsHumanSupport: data.needsHumanSupport || false,\n    telegramAlertText: data.telegramAlertText || '',\n    skipSend: data.skipSend || false,\n    memoryUpdate: data.memoryUpdate || {},\n    intent: data.intent || 'unknown',\n    route: data.route || 'unknown',\n    aiUsed: data.aiUsed || false,\n    messageMid: data.messageMid || '',\n    confidence: data.confidence || 'medium'\n  }}];\n} catch (err) {\n  return [{ json: {\n    senderPsid: '',\n    replyText: 'Problem \\u09B9\\u09AF\\u09BC\\u09C7\\u099B\\u09C7\\u0964 \\\"human\\\" \\u09B2\\u09BF\\u0996\\u09C1\\u09A8, team help \\u0995\\u09B0\\u09AC\\u09C7\\u0964',\n    needsHumanSupport: true,\n    telegramAlertText: 'ERROR in Prepare Final Reply: ' + err.message,\n    skipSend: false,\n    memoryUpdate: {},\n    intent: 'error',\n    route: 'error',\n    aiUsed: false,\n    messageMid: '',\n    confidence: 'low'\n  }}];\n}"
+      },
+      "id": "prepare-final-reply-v6",
+      "name": "Prepare Final Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2800, 520]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Update Memory + Log v6: Persist memory updates to workflow static data\ntry {\n  const data = $input.first().json;\n  const senderPsid = data.senderPsid;\n  const memoryUpdate = data.memoryUpdate || {};\n\n  if (senderPsid && Object.keys(memoryUpdate).length > 0) {\n    const staticData = $getWorkflowStaticData('global');\n    const memKey = `mem_${senderPsid}`;\n    if (!staticData[memKey]) staticData[memKey] = {};\n\n    // Apply updates\n    for (const [key, value] of Object.entries(memoryUpdate)) {\n      staticData[memKey][key] = value;\n    }\n    staticData[memKey].lastActive = Date.now();\n    staticData[memKey].lastIntent = data.intent || staticData[memKey].lastIntent;\n    staticData[memKey].lastMessage = data.customerMessage || staticData[memKey].lastMessage;\n    staticData[memKey].updatedAt = new Date().toISOString();\n\n    // Clean old memory entries (>7 days)\n    const sevenDays = 7 * 24 * 60 * 60 * 1000;\n    const now = Date.now();\n    for (const key of Object.keys(staticData)) {\n      if (key.startsWith('mem_') && staticData[key].lastActive && (now - staticData[key].lastActive > sevenDays)) {\n        delete staticData[key];\n      }\n    }\n  }\n\n  return [{ json: data }];\n} catch (err) {\n  // Memory update failure should not block the reply\n  return [{ json: $input.first().json }];\n}"
+      },
+      "id": "update-memory-v6",
+      "name": "Update Memory + Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3000, 520]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-not-skip",
+              "leftValue": "={{ $json.skipSend }}",
+              "rightValue": "={{true}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "cond-has-psid",
+              "leftValue": "={{ $json.senderPsid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "cond-has-reply",
+              "leftValue": "={{ $json.replyText }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "should-send-v6",
+      "name": "Should Send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3200, 520]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": { \"id\": \"{{ $json.senderPsid }}\" },\n  \"messaging_type\": \"RESPONSE\",\n  \"message\": { \"text\": {{ JSON.stringify($json.replyText) }} }\n}",
+        "options": {}
+      },
+      "id": "send-messenger-reply-v6",
+      "name": "Send Messenger Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3400, 520],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "FACEBOOK_PAGE_ACCESS_TOKEN_PLACEHOLDER",
+          "name": "Facebook Page Access Token"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Mark Processed v6: Mark messageMid as processed after successful send\ntry {\n  const data = $input.first().json;\n  const messageMid = data.messageMid || $('Decision Engine v6').first()?.json?.messageMid;\n\n  if (messageMid) {\n    const staticData = $getWorkflowStaticData('global');\n    if (!staticData.processedMids) staticData.processedMids = {};\n    staticData.processedMids[messageMid] = Date.now();\n  }\n\n  return [{ json: data }];\n} catch (err) {\n  return [{ json: $input.first().json }];\n}"
+      },
+      "id": "mark-processed-v6",
+      "name": "Mark Processed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3600, 520]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-needs-alert",
+              "leftValue": "={{ $json.needsHumanSupport }}",
+              "rightValue": "={{true}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-has-alert-text",
+              "leftValue": "={{ $json.telegramAlertText }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-telegram-v6",
+      "name": "Needs Telegram Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3400, 700]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Prepare Telegram Alert v6: Format alert message for Telegram\ntry {\n  const data = $input.first().json;\n  const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);\n  const memorySummary = JSON.stringify(data.memoryUpdate || {}).substring(0, 200);\n\n  const telegramMessage = `<b>HUMAN SUPPORT NEEDED</b>\\n\\n` +\n    `<b>PSID:</b> ${data.senderPsid || 'unknown'}\\n` +\n    `<b>Message ID:</b> ${data.messageMid || 'N/A'}\\n` +\n    `<b>Customer Message:</b> ${(data.customerMessage || data.replyText || '').substring(0, 300)}\\n` +\n    `<b>Language:</b> ${data.languageStyle || 'unknown'}\\n` +\n    `<b>Intent:</b> ${data.intent || 'unknown'}\\n` +\n    `<b>Confidence:</b> ${data.confidence || 'unknown'}\\n` +\n    `<b>Reason:</b> ${data.telegramAlertText || 'human_support_triggered'}\\n` +\n    `<b>Memory:</b> ${memorySummary}\\n` +\n    `<b>Time:</b> ${timestamp}`;\n\n  return [{ json: { ...data, telegramMessage } }];\n} catch (err) {\n  const data = $input.first()?.json || {};\n  return [{ json: { ...data, telegramMessage: `ALERT ERROR: ${err.message}\\nPSID: ${data.senderPsid || 'unknown'}` } }];\n}"
+      },
+      "id": "prepare-telegram-v6",
+      "name": "Prepare Telegram Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3600, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/botTELEGRAM_BOT_TOKEN_PLACEHOLDER/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"TELEGRAM_CHAT_ID_PLACEHOLDER\",\n  \"text\": {{ JSON.stringify($json.telegramMessage) }},\n  \"parse_mode\": \"HTML\"\n}",
+        "options": {}
+      },
+      "id": "send-telegram-v6",
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3800, 700]
+    }
+  ],
+
+  "connections": {
+    "GET Webhook (Verify)": {
+      "main": [
+        [
+          {
+            "node": "Verify Token Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Token Check": {
+      "main": [
+        [
+          {
+            "node": "Respond with Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 403",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Webhook (Messages)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract + Dedup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract + Dedup": {
+      "main": [
+        [
+          {
+            "node": "Is Valid + Not Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "Is Valid + Not Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Has Audio?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Has Audio?": {
+      "main": [
+        [
+          {
+            "node": "Transcribe Audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Memory + Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe Audio": {
+      "main": [
+        [
+          {
+            "node": "Handle Transcription Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Transcription Result": {
+      "main": [
+        [
+          {
+            "node": "Skip To Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip To Reply?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Memory + Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "Load Memory + Normalize": {
+      "main": [
+        [
+          {
+            "node": "Read FAQ Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read FAQ Sheet": {
+      "main": [
+        [
+          {
+            "node": "Read Products Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Products Sheet": {
+      "main": [
+        [
+          {
+            "node": "Read Size Guide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Size Guide": {
+      "main": [
+        [
+          {
+            "node": "Read Sales Objections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Sales Objections": {
+      "main": [
+        [
+          {
+            "node": "Decision Engine v6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Engine v6": {
+      "main": [
+        [
+          {
+            "node": "AI Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+
+    "AI Needed?": {
+      "main": [
+        [
+          {
+            "node": "AI Agent (Fallback Only)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Final Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent (Fallback Only)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Reply": {
+      "main": [
+        [
+          {
+            "node": "Update Memory + Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Memory + Log": {
+      "main": [
+        [
+          {
+            "node": "Should Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Send?": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Needs Telegram Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+
+    "Send Messenger Reply": {
+      "main": [
+        [
+          {
+            "node": "Mark Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Telegram Alert?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent (Fallback Only)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2
+}
