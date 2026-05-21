@@ -1,0 +1,771 @@
+{
+  "name": "Messenger Hybrid AI v3 (Fixed)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "get-webhook-v3",
+      "name": "GET Webhook (Verify)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        160
+      ],
+      "webhookId": "messenger-get-verify-v3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-mode",
+              "leftValue": "={{ $json.query['hub.mode'] }}",
+              "rightValue": "subscribe",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-token",
+              "leftValue": "={{ $json.query['hub.verify_token'] }}",
+              "rightValue": "CHANGE_ME_VERIFY_TOKEN",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "verify-check-v3",
+      "name": "Verify Token Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('GET Webhook (Verify)').item.json.query['hub.challenge'] }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-challenge-v3",
+      "name": "Respond with Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        660,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Forbidden",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "respond-403-v3",
+      "name": "Respond 403",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        660,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "post-webhook-v3",
+      "name": "POST Webhook (Messages)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        520
+      ],
+      "webhookId": "messenger-post-messages-v3"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "EVENT_RECEIVED",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-200-v3",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        440,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract messaging event from Meta webhook payload\nconst body = $input.first().json.body;\nconst entry = body?.entry?.[0];\nconst messaging = entry?.messaging?.[0];\n\nif (!messaging) return [{ json: { skip: true, reason: 'no_messaging_event' } }];\nif (messaging.delivery || messaging.read) return [{ json: { skip: true, reason: 'delivery_or_read_event' } }];\nif (messaging.message?.is_echo) return [{ json: { skip: true, reason: 'echo_message' } }];\nif (!messaging.message?.text) return [{ json: { skip: true, reason: 'no_text_message' } }];\n\nreturn [{ json: { skip: false, senderPsid: messaging.sender.id, messageText: messaging.message.text, timestamp: messaging.timestamp } }];"
+      },
+      "id": "extract-message-v3",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": "={{false}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid-v3",
+      "name": "Is Valid Text Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// HYBRID ROUTER v3: Language detection + Rules-first routing\n// Fixes: consistent replyText output, language style detection, BD-friendly\n\nconst msg = $input.first().json.messageText;\nconst psid = $input.first().json.senderPsid;\nconst normalized = msg.toLowerCase().trim().replace(/[^a-z0-9\\s\\u0980-\\u09FF]/g, '');\nconst words = normalized.split(/\\s+/);\n\n// --- LANGUAGE DETECTION ---\nconst banglaRegex = /[\\u0980-\\u09FF]/;\nconst banglishWords = ['ki','kemon','ache','chai','korbo','hobe','diben','koto','dam','poro','eid','salam','bhai','apa','vai','dada','onek','sundor','valo','kobe','dhorte','pathaben'];\nlet languageStyle = 'english';\nif (banglaRegex.test(msg)) {\n  languageStyle = 'bangla';\n} else if (words.some(w => banglishWords.includes(w)) || /\\b(er|ta|tay|te|gulo)\\b/.test(normalized)) {\n  languageStyle = 'banglish';\n}\n\n// --- BRANCH 1: Static Greetings (NO AI) ---\nconst greetings = ['hi','hello','hey','hola','assalamualaikum','salam','yo','sup','walaikum'];\nconst thanks = ['thanks','thank','thankyou','thx','jazakallah','shukria','dhonnobad'];\nconst byes = ['bye','goodbye','later','seeya','cya','allah hafez','khuda hafez'];\n\nif (words.length <= 4) {\n  if (words.some(w => greetings.includes(w))) {\n    const replies = {\n      bangla: 'ওয়ালাইকুমুস সালাম! আমাদের স্টোরে স্বাগতম। আমি আপনাকে প্রোডাক্ট খুঁজতে, প্রশ্নের উত্তর দিতে বা অর্ডার করতে সাহায্য করতে পারি। কী খুঁজছেন?',\n      banglish: 'Walaikumussalam! Amader store e welcome. Ami apnake product khujte, question er answer dite ba order korte help korte pari. Ki khujchen?',\n      english: 'Hello! Welcome to our store. I can help you find products, answer questions, or place an order. What are you looking for today?'\n    };\n    return [{ json: { route: 'greeting', senderPsid: psid, customerMessage: msg, intent: 'greeting', replyText: replies[languageStyle], needsHumanSupport: false, languageStyle } }];\n  }\n  if (words.some(w => thanks.includes(w))) {\n    const replies = { bangla: 'আপনাকে স্বাগতম! আর কিছু লাগলে জানাবেন।', banglish: 'Apnake welcome! Ar kichu lagle janaben.', english: 'You are welcome! Let me know if there is anything else I can help with.' };\n    return [{ json: { route: 'thanks', senderPsid: psid, customerMessage: msg, intent: 'thanks', replyText: replies[languageStyle], needsHumanSupport: false, languageStyle } }];\n  }\n  if (words.some(w => byes.includes(w))) {\n    const replies = { bangla: 'আল্লাহ হাফেজ! আবার আসবেন। ধন্যবাদ!', banglish: 'Allah hafez! Abar asben. Dhonnobad!', english: 'Goodbye! Thanks for chatting. Come back anytime!' };\n    return [{ json: { route: 'bye', senderPsid: psid, customerMessage: msg, intent: 'bye', replyText: replies[languageStyle], needsHumanSupport: false, languageStyle } }];\n  }\n}\n\n// --- BRANCH 6: Human Support (NO AI) ---\nconst supportWords = ['human','agent','person','representative','manager','speak to','talk to','complaint','refund','fraud','overcharged','legal','lawyer','wrong item','damaged','broken','manush','kotha bolte chai','somossa'];\nconst angryPatterns = (msg === msg.toUpperCase() && msg.length > 10) || msg.includes('!!!');\nif (supportWords.some(w => normalized.includes(w)) || angryPatterns) {\n  const replies = { bangla: 'আমি বুঝতে পারছি আপনার সাহায্য দরকার। আমাদের টিম ২-৪ ঘণ্টার মধ্যে আপনার সাথে যোগাযোগ করবে। জরুরি হলে support@yourbrand.com এ ইমেইল করুন।', banglish: 'Ami bujhte parchi apnar help dorkar. Amader team 2-4 ghontar moddhe apnar sathe jogajog korbe. Joruri hole support@yourbrand.com e email korun.', english: 'I understand you need help from our team. They will respond within 2-4 hours (Mon-Fri, 9AM-6PM). If urgent, email support@yourbrand.com.' };\n  return [{ json: { route: 'support', senderPsid: psid, customerMessage: msg, intent: 'human_support', replyText: replies[languageStyle], needsHumanSupport: true, languageStyle, telegramAlertText: `SUPPORT REQUEST\\nPSID: ${psid}\\nMessage: ${msg}\\nLanguage: ${languageStyle}\\nReason: customer_requested` } }];\n}\n\n// --- BRANCH 5: Order Tracking (NO AI) ---\nconst trackWords = ['track','tracking','where is my order','order status','delivery status','has it shipped','my order','when will it arrive','order kothay','delivery kobe','parcel'];\nconst orderIdMatch = msg.match(/ORD-[\\w-]+/i);\nif (trackWords.some(w => normalized.includes(w)) || orderIdMatch) {\n  let reply;\n  if (orderIdMatch) {\n    reply = languageStyle === 'bangla' ? `আপনার অর্ডার ${orderIdMatch[0].toUpperCase()} খুঁজে দেখছি। আমাদের টিম শীঘ্রই আপডেট দিবে।` : languageStyle === 'banglish' ? `Apnar order ${orderIdMatch[0].toUpperCase()} khuje dekhchi. Amader team sighri update dibe.` : `I found your order reference: ${orderIdMatch[0].toUpperCase()}. Our team will update you shortly.`;\n  } else {\n    reply = languageStyle === 'bangla' ? 'আপনার অর্ডার নম্বরটি দিন (ORD-YYYYMMDD-XXX)।' : languageStyle === 'banglish' ? 'Apnar order number ta din (ORD-YYYYMMDD-XXX).' : 'Please provide your order number (format: ORD-YYYYMMDD-XXX).';\n  }\n  return [{ json: { route: 'tracking', senderPsid: psid, customerMessage: msg, intent: 'order_tracking', replyText: reply, needsHumanSupport: false, languageStyle } }];\n}\n\n// --- BRANCH 4: Order Intent (NO AI) ---\nconst buyWords = ['buy','order','purchase','i want','ill take','add to cart','i need','id like','kinbo','order korbo','nibo','chai','kinte','buy korte'];\nif (buyWords.some(w => normalized.includes(w))) {\n  const replies = { bangla: 'অর্ডার করতে চাইলে জানান:\\n1. কোন প্রোডাক্ট?\\n2. সাইজ?\\n3. কালার?\\n4. নাম ও নম্বর\\n5. ঠিকানা\\n\\nকোন প্রোডাক্ট পছন্দ হয়েছে?', banglish: 'Order korte chaile janan:\\n1. Kon product?\\n2. Size?\\n3. Color?\\n4. Naam o number\\n5. Address\\n\\nKon product pochondo hoyeche?', english: 'To place an order, I need:\\n1. Which product?\\n2. Size?\\n3. Color?\\n4. Name & phone\\n5. Address\\n\\nWhich product are you interested in?' };\n  return [{ json: { route: 'order_intent', senderPsid: psid, customerMessage: msg, intent: 'order_create', replyText: replies[languageStyle], needsHumanSupport: false, languageStyle } }];\n}\n\n// --- Pass to FAQ/Product/AI check ---\nreturn [{ json: { route: 'check_sheets', senderPsid: psid, customerMessage: msg, normalized, languageStyle, intent: 'unknown_yet', needsHumanSupport: false } }];\n"
+      },
+      "id": "hybrid-router-v3",
+      "name": "Hybrid Router (Rules First)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        520
+      ],
+      "notes": "v3: Language detection (Bangla/Banglish/English)\nFAQ exact match = no AI cost\nProduct lookup = no AI cost\nTracking lookup = no AI cost\nAI Agent only on fallback"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "route-sheets",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "check_sheets",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-sheets-v3",
+      "name": "Needs Sheet Lookup?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Clothing Brand Chatbot Database"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "FAQ"
+        },
+        "options": {}
+      },
+      "id": "read-faq-v3",
+      "name": "Read FAQ Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        420
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Clothing Brand Chatbot Database"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Products"
+        },
+        "options": {}
+      },
+      "id": "read-products-v3",
+      "name": "Read Products Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        620
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// FAQ + PRODUCT SEARCH (NO AI COST) - v3 Fixed\n// Outputs consistent: senderPsid, customerMessage, intent, replyText, needsHumanSupport, languageStyle\n\ntry {\n  const routerData = $('Needs Sheet Lookup?').first().json;\n  const customerMsg = routerData.customerMessage;\n  const normalized = routerData.normalized;\n  const psid = routerData.senderPsid;\n  const languageStyle = routerData.languageStyle || 'english';\n  const words = normalized.split(/\\s+/).filter(w => w.length > 2).filter(w => !['the','and','for','are','this','that','with','have','show','want','your','what','does','come','any','can','you','please','hello','much','how','there','ami','apni','kono','holo','kore','theke'].includes(w));\n\n  // --- TRY FAQ ---\n  const faqRows = $('Read FAQ Sheet').all().map(i => i.json);\n  const activeFaqs = faqRows.filter(f => String(f.Active).toUpperCase() === 'YES');\n  let bestFaq = null; let bestFaqScore = 0;\n  for (const faq of activeFaqs) {\n    const faqKeywords = (faq.Keywords || '').toLowerCase().split(',').map(k => k.trim());\n    const questionWords = (faq.Question || '').toLowerCase().split(/\\s+/);\n    let score = 0;\n    for (const word of words) {\n      if (faqKeywords.some(k => k.includes(word) || word.includes(k))) score += 2;\n      if (questionWords.includes(word)) score += 1;\n    }\n    if (score > bestFaqScore) { bestFaqScore = score; bestFaq = faq; }\n  }\n  if (bestFaq && bestFaqScore >= 3) {\n    return [{ json: { route: 'faq_match', senderPsid: psid, customerMessage: customerMsg, intent: 'faq', replyText: bestFaq.Answer, needsHumanSupport: false, languageStyle, aiUsed: false } }];\n  }\n\n  // --- TRY PRODUCTS ---\n  const productRows = $('Read Products Sheet').all().map(i => i.json);\n  const activeProducts = productRows.filter(p => String(p.Active).toUpperCase() === 'YES');\n  const scored = activeProducts.map(product => {\n    const searchable = [product.Product_Name||'', product.Category||'', product.Description||'', product.Size||'', product.Color||'', product.Search_Keywords||''].join(' ').toLowerCase();\n    let score = 0;\n    for (const term of words) { if (searchable.includes(term)) score++; }\n    return { ...product, score };\n  }).filter(p => p.score > 0);\n\n  const grouped = {};\n  for (const m of scored) {\n    const pid = m.Product_ID;\n    if (!grouped[pid]) { grouped[pid] = { Product_ID: pid, Product_Name: m.Product_Name, Price: m.Price, Currency: m.Currency||'BDT', sizes: [], colors: [], inStock: 0, topScore: 0 }; }\n    if (m.score > grouped[pid].topScore) grouped[pid].topScore = m.score;\n    if (String(m.In_Stock).toUpperCase() === 'YES') {\n      grouped[pid].inStock++;\n      if (m.Size && !grouped[pid].sizes.includes(m.Size)) grouped[pid].sizes.push(m.Size);\n      if (m.Color && !grouped[pid].colors.includes(m.Color)) grouped[pid].colors.push(m.Color);\n    }\n  }\n  const results = Object.values(grouped).sort((a,b) => b.topScore - a.topScore).slice(0, 5);\n\n  if (results.length > 0) {\n    let reply = '';\n    if (languageStyle === 'bangla') { reply = `${results.length}টি প্রোডাক্ট পেয়েছি:\\n\\n`; }\n    else if (languageStyle === 'banglish') { reply = `${results.length}ta product peyechi:\\n\\n`; }\n    else { reply = `I found ${results.length} product${results.length>1?'s':''}:\\n\\n`; }\n    results.forEach((p, i) => {\n      reply += `${i+1}. ${p.Product_Name} — ৳${p.Price}\\n`;\n      if (p.sizes.length) reply += `   Size: ${p.sizes.join(', ')}\\n`;\n      if (p.colors.length) reply += `   Color: ${p.colors.join(', ')}\\n`;\n      if (p.inStock === 0) reply += `   (Out of stock)\\n`;\n      reply += '\\n';\n    });\n    if (languageStyle === 'bangla') reply += 'কোনটা অর্ডার করতে চান? সাইজ ও কালার জানান!';\n    else if (languageStyle === 'banglish') reply += 'Konta order korte chan? Size o color janan!';\n    else reply += 'Want to order? Tell me the product, size, and color!';\n    return [{ json: { route: 'product_match', senderPsid: psid, customerMessage: customerMsg, intent: 'product_inquiry', replyText: reply, needsHumanSupport: false, languageStyle, aiUsed: false } }];\n  }\n\n  // --- NO MATCH: Build context for AI ---\n  const productSummary = [...new Set(activeProducts.map(p => p.Category))].slice(0,6).join(', ');\n  if (words.length === 0) {\n    const fallback = languageStyle === 'bangla' ? 'আমি সাহায্য করতে চাই! প্রোডাক্ট, শিপিং, রিটার্ন, সাইজ নিয়ে জিজ্ঞেস করতে পারেন।' : languageStyle === 'banglish' ? 'Ami help korte chai! Product, shipping, return, size niye jiggesh korte paren.' : \"I'd love to help! Ask about products, shipping, returns, or sizing.\";\n    return [{ json: { route: 'ai_fallback', senderPsid: psid, customerMessage: customerMsg, intent: 'unclear', replyText: fallback, needsHumanSupport: false, languageStyle, aiUsed: false } }];\n  }\n\n  return [{ json: { route: 'ai_fallback', senderPsid: psid, customerMessage: customerMsg, intent: 'complex_question', replyText: '', needsHumanSupport: false, languageStyle, aiUsed: true, availableCategories: productSummary } }];\n} catch (err) {\n  const psid = $input.first()?.json?.senderPsid || '';\n  const msg = $input.first()?.json?.customerMessage || '';\n  return [{ json: { route: 'error', senderPsid: psid, customerMessage: msg, intent: 'error', replyText: 'Sorry, something went wrong. Please try again or type \"human\" for support.', needsHumanSupport: true, languageStyle: 'english', aiUsed: false, telegramAlertText: `ERROR in FAQ/Product search\\nPSID: ${psid}\\nError: ${err.message}` } }];\n}\n"
+      },
+      "id": "faq-product-search-v3",
+      "name": "FAQ + Product Search (No AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        520
+      ],
+      "notes": "v3: Consistent replyText output\nFAQ match = no AI\nProduct match = no AI\nPasses context to AI if no match"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ai-needed",
+              "leftValue": "={{ $json.aiUsed }}",
+              "rightValue": "={{true}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ai-needed-check-v3",
+      "name": "AI Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.messageText }}",
+        "options": {
+          "systemMessage": "You are a friendly Bangladeshi clothing brand assistant. Reply in the SAME language style as the customer:\n- If they write Bangla (বাংলা), reply in Bangla.\n- If they write Roman Bangla/Banglish, reply in Banglish.\n- If they write English, reply in English.\n\nRULES:\n1) Keep replies SHORT (under 150 words), friendly, warm, human-like.\n2) Help with style advice, outfit suggestions, fabric info, occasion recommendations.\n3) NEVER invent product names, prices, stock, delivery dates, or order status.\n4) If asked about specific inventory, say \"amader collection dekhte 'show me [category]' likhun\" or equivalent.\n5) For refunds/complaints, say \"amader team er sathe kotha bolte 'human' likhun\".\n6) For order tracking, say \"order track korte 'track ORD-XXXXX' likhun\".\n7) Ask ONE helpful follow-up question to understand their need better.\n8) Be warm like a helpful shop assistant in Bangladesh.\n9) Mention occasions (Eid, wedding, casual, office) when relevant.\n10) Stay within clothing/fashion topics only."
+        }
+      },
+      "id": "ai-agent-v3",
+      "name": "AI Agent (Fallback Only)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        2200,
+        440
+      ],
+      "notes": "v3: BD clothing brand context\nReplies in customer language\nNever invents data\nOnly runs when sheets cant answer"
+    },
+    {
+      "parameters": {
+        "options": {
+          "model": "gpt-4o-mini"
+        }
+      },
+      "id": "chat-model-v3",
+      "name": "Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        2220,
+        640
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_YOUR_AI_CREDENTIAL_ID",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// PREPARE REPLY v3 - Fixed to handle AI Agent output correctly\n// The AI Agent node outputs in .output field (LangChain format)\ntry {\n  const data = $input.first().json;\n  let psid = data.senderPsid || '';\n  let replyText = '';\n\n  // Priority order for finding reply text:\n  // 1. Direct replyText from rule-based branches\n  if (data.replyText && data.replyText.length > 0) {\n    replyText = data.replyText;\n  }\n  // 2. AI Agent output (LangChain agent outputs in .output)\n  else if (data.output && typeof data.output === 'string' && data.output.length > 0) {\n    replyText = data.output;\n  }\n  // 3. AI Agent text field\n  else if (data.text && typeof data.text === 'string' && data.text.length > 0) {\n    replyText = data.text;\n  }\n  // 4. Response field\n  else if (data.response && typeof data.response === 'string') {\n    replyText = data.response;\n  }\n  // 5. Fallback\n  else {\n    replyText = 'I apologize for the inconvenience. Please type \"human\" and our team will assist you directly.';\n  }\n\n  // Truncate for Messenger 2000 char limit\n  if (replyText.length > 1950) {\n    replyText = replyText.substring(0, 1947) + '...';\n  }\n\n  // Get PSID from various possible locations\n  if (!psid && data.senderPsid) psid = data.senderPsid;\n\n  return [{ json: { senderPsid: psid, replyText: replyText, needsHumanSupport: data.needsHumanSupport || false, telegramAlertText: data.telegramAlertText || '' } }];\n} catch (err) {\n  return [{ json: { senderPsid: '', replyText: 'Something went wrong. Type \"human\" for support.', needsHumanSupport: true, telegramAlertText: 'ERROR in Prepare Reply: ' + err.message } }];\n}\n"
+      },
+      "id": "prepare-reply-v3",
+      "name": "Prepare Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        520
+      ],
+      "notes": "v3 FIX: Reads AI output from .output field (LangChain)\nAlso checks .text, .response as fallbacks\nAlways outputs replyText + senderPsid"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v18.0/me/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": { \"id\": \"{{ $json.senderPsid }}\" },\n  \"messaging_type\": \"RESPONSE\",\n  \"message\": { \"text\": {{ JSON.stringify($json.replyText) }} }\n}",
+        "options": {}
+      },
+      "id": "send-reply-v3",
+      "name": "Send Messenger Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        520
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID",
+          "name": "Facebook Page Access Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// TRACKING LOOKUP (NO AI COST)\n// Search Tracking tab by Order_ID or customer email\nconst data = $input.first().json;\nconst psid = data.senderPsid;\nconst orderId = data.orderId;\nconst msg = data.messageText;\n\n// For v2, reply with instructions since we don't have tracking data connected yet\nlet reply = '';\nif (orderId) {\n  reply = `I found your order reference: ${orderId}\\n\\nLet me check the status for you. Our team will update you shortly with tracking details.\\n\\nIf you need immediate help, type \"speak to a human\".`;\n} else {\n  reply = 'I can help you track your order! Please provide your order number (it looks like ORD-YYYYMMDD-XXX).\\n\\nExample: \"Track ORD-20250120-001\"';\n}\n\nreturn [{ json: { route: 'tracking', senderPsid: psid, replyText: reply, aiUsed: false } }];"
+      },
+      "id": "tracking-handler-v3",
+      "name": "Tracking Lookup (No AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        820
+      ],
+      "notes": "Tracking lookup = no AI cost"
+    },
+    {
+      "parameters": {
+        "jsCode": "// SUPPORT TICKET HANDLER (NO AI COST)\nconst data = $input.first().json;\nconst psid = data.senderPsid;\nconst msg = data.messageText || '';\n\nconst reply = `I understand you need help from our team. I have flagged your conversation for priority support.\\n\\nOur team will respond to you in this chat within 2-4 hours (business hours: Mon-Fri, 9 AM - 6 PM).\\n\\nIf urgent, you can also email: support@yourbrand.com\\n\\nIs there anything else I can help with while you wait?`;\n\nreturn [{ json: { route: 'support', senderPsid: psid, replyText: reply, aiUsed: false } }];"
+      },
+      "id": "support-handler-v3",
+      "name": "Support Ticket Handler (No AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ORDER INTENT HANDLER\nconst data = $input.first().json;\nconst psid = data.senderPsid;\nconst msg = data.messageText || '';\n\nconst reply = `Great, I would love to help you place an order!\\n\\nTo create your order, I need:\\n1. Which product? (e.g., Classic Black T-Shirt)\\n2. What size?\\n3. What color?\\n4. Your name and email\\n5. Shipping address\\n\\nWhich product are you interested in? You can also say \"show me t-shirts\" to browse first.`;\n\nreturn [{ json: { route: 'order_intent', senderPsid: psid, replyText: reply, aiUsed: false } }];"
+      },
+      "id": "order-handler-v3",
+      "name": "Order Intent Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Send Telegram alert for human support cases\nconst data = $input.first().json;\nconst alertText = data.telegramAlertText || '';\nconst psid = data.senderPsid || 'unknown';\nconst needsAlert = data.needsHumanSupport === true && alertText.length > 0;\n\nif (!needsAlert) {\n  // No alert needed, pass through\n  return [{ json: data }];\n}\n\n// Format the Telegram message\nconst timestamp = new Date().toISOString().replace('T',' ').substring(0,19);\nconst telegramMessage = `🚨 HUMAN SUPPORT NEEDED\\n\\n${alertText}\\n\\nTime: ${timestamp}`;\n\nreturn [{ json: { ...data, telegramMessage, sendAlert: true } }];\n"
+      },
+      "id": "telegram-prep-v3",
+      "name": "Prepare Telegram Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        700
+      ],
+      "notes": "Formats Telegram alert message for human support cases"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/botTELEGRAM_BOT_TOKEN_PLACEHOLDER/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"TELEGRAM_CHAT_ID_PLACEHOLDER\",\n  \"text\": {{ JSON.stringify($json.telegramMessage) }},\n  \"parse_mode\": \"HTML\"\n}",
+        "options": {}
+      },
+      "id": "telegram-send-v3",
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        700
+      ],
+      "notes": "Sends alert to your Telegram group/channel\nReplace TELEGRAM_BOT_TOKEN_PLACEHOLDER and TELEGRAM_CHAT_ID_PLACEHOLDER"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "needs-tg",
+              "leftValue": "={{ $json.needsHumanSupport }}",
+              "rightValue": "={{true}}",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-telegram-v3",
+      "name": "Needs Telegram Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "GET Webhook (Verify)": {
+      "main": [
+        [
+          {
+            "node": "Verify Token Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Token Check": {
+      "main": [
+        [
+          {
+            "node": "Respond with Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 403",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Webhook (Messages)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "Is Valid Text Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid Text Message?": {
+      "main": [
+        [
+          {
+            "node": "Hybrid Router (Rules First)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Hybrid Router (Rules First)": {
+      "main": [
+        [
+          {
+            "node": "Needs Sheet Lookup?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Sheet Lookup?": {
+      "main": [
+        [
+          {
+            "node": "Read FAQ Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Read Products Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read FAQ Sheet": {
+      "main": [
+        [
+          {
+            "node": "FAQ + Product Search (No AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Products Sheet": {
+      "main": [
+        [
+          {
+            "node": "FAQ + Product Search (No AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FAQ + Product Search (No AI)": {
+      "main": [
+        [
+          {
+            "node": "AI Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Needed?": {
+      "main": [
+        [
+          {
+            "node": "AI Agent (Fallback Only)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent (Fallback Only)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Needs Telegram Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Telegram Alert?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tracking Lookup (No AI)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Support Ticket Handler (No AI)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Order Intent Handler": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2025-05-21T00:00:00.000Z",
+  "versionId": "3"
+}
