@@ -1,488 +1,502 @@
-# n8n Workflow Plan
+# n8n Workflow Plan — Hybrid AI v2 Architecture
 
 ## Overview
 
-This document explains **which n8n nodes you need** and **how they connect together** to build the chatbot workflow.
+This document explains the **Messenger Hybrid AI v2** workflow architecture — which nodes exist, how they connect, and why the system checks rules and Google Sheets **before** calling AI.
 
-Think of an n8n workflow like a flowchart: a message comes in, goes through decision points, and the right action happens automatically.
+**Core principle:** Save AI/API costs by answering from rules and data first. Only use the AI Agent when no confident answer can be given from static rules or Google Sheets.
 
----
-
-## What Is an n8n Node?
-
-A **node** is a single step in your workflow. Each node does one specific job:
-
-- Receive a message
-- Make a decision
-- Look up data in Google Sheets
-- Send a reply
-
-You connect nodes together with lines (called "connections") to build the full workflow.
+> **v4 Available:** The v4 workflow (`n8n-messenger-hybrid-ai-v4.json`) provides an upgraded version with: AI-first classification (GPT-4o-mini), style recommendations branch, message.mid deduplication, canonical `{replyText, senderId}` output from all branches, and a single final Messenger Send API node. See `messenger-hybrid-v4-import-instructions.md` for setup.
 
 ---
 
-## Workflow Architecture (The Big Picture)
+## Platform: Facebook Messenger
 
-> **Note:** The v4 implementation (`n8n-messenger-hybrid-ai-v4.json`) provides a ready-to-import version of this architecture targeting Facebook Messenger with AI classification. See `messenger-hybrid-v4-import-instructions.md` for setup.
+| Component | Role |
+|-----------|------|
+| **Facebook Page** | What customers message |
+| **Meta Webhooks** | Delivers customer messages to your n8n webhook URL |
+| **n8n Webhooks** | Receives messages (POST) and verifies ownership (GET) |
+| **Google Sheets** | Your database (Products, FAQ, Orders, Tracking, Customers, Support_Tickets) |
+| **Messenger Send API** | How n8n sends replies back to the customer |
+| **AI Agent + Chat Model** | Fallback ONLY — handles complex questions that sheets/rules cannot answer |
 
-Here is the flow from start to finish:
+---
+
+## Cost-Saving Design
+
+| Route | AI Used? | Cost |
+|-------|----------|------|
+| Greetings (hi, hello, assalamualaikum, thanks, bye) | No | **Free** |
+| FAQ answers (matched from FAQ tab) | No | **Free** |
+| Product lookup (matched from Products tab) | No | **Free** |
+| Order tracking detection | No | **Free** |
+| Human support detection | No | **Free** |
+| Order/buy intent detection | No | **Free** |
+| Complex/unclear questions (AI fallback) | **Yes** | **Costs money** |
+
+**Expected:** 70-90% of messages handled without AI.
+
+---
+
+## Full Architecture Diagram
+
+### Path A: GET Webhook — Meta Verification (one-time)
 
 ```
-Customer sends message (via Messenger webhook)
+Meta sends GET request (during webhook setup)
         |
         v
-[1. Webhook Trigger] - Receives the message + ACK 200
+[1. GET Webhook (Verify)] — path: messenger-webhook
         |
         v
-[1b. Extract & Dedup] - Parse payload, check message.mid for duplicates
+[2. Verify Token Check] — hub.mode=subscribe AND hub.verify_token matches?
+        |
+        ├── YES → [3. Respond with Challenge] — return hub.challenge (200)
+        └── NO  → [4. Respond 403 Forbidden]
+```
+
+### Path B: POST Webhook — Hybrid Message Processing
+
+```
+Customer sends message in Messenger
         |
         v
-[2. AI Classifier] - Decides what type of message it is (GPT-4o-mini)
+[5. POST Webhook (Messages)] — path: messenger-webhook
         |
-        +--> Simple greeting/thanks --> [3. Direct Reply]
-        |
-        +--> Product question -------> [4. Product Lookup] --> [5. Format & Reply]
-        |
-        +--> FAQ question -----------> [6. FAQ Lookup] --> [7. Format & Reply]
-        |
-        +--> Style/outfit advice ----> [7b. Style Recommendation]
-        |
-        +--> Wants to order ---------> [8. Collect Order Info] --> [9. Save Order] --> [10. Confirm Reply]
-        |
-        +--> Order tracking ---------> [11. Tracking Lookup] --> [12. Format & Reply]
-        |
-        +--> Needs human help -------> [13. Create Ticket] --> [14. Handoff Reply]
-        |
-        +--> Unknown/unclear --------> [15. Fallback Reply]
-        |
-        v
-[SINGLE SEND NODE] - All branches output { replyText, senderId } → Messenger Send API
+        ├──→ [6. Respond 200 OK] — immediate ACK (parallel)
+        └──→ [7. Extract Message Data] — parse PSID + text
+                |
+                v
+        [8. Is Valid Text Message?] — skip echoes/delivery/read/non-text
+                |
+                ├── NO → (ends — no reply)
+                └── YES ↓
+                        v
+        [9. Hybrid Router (Rules First)] — checks static rules IN ORDER:
+                |
+                ├── greeting/thanks/bye? → direct reply text → [14. Prepare Reply]
+                ├── support keywords? → [12. Support Ticket Handler] → [14]
+                ├── tracking keywords? → [11. Tracking Lookup] → [14]
+                ├── buy/order keywords? → [13. Order Intent Handler] → [14]
+                └── none matched? → route = "check_sheets"
+                        |
+                        v
+        [10. Needs Sheet Lookup?] — route == "check_sheets"?
+                |
+                ├── YES → Read FAQ Sheet + Read Products Sheet (parallel)
+                |              |
+                |              v
+                |         [FAQ + Product Search (No AI)] — score FAQ then products
+                |              |
+                |              ├── FAQ strong match? → reply with Answer (aiUsed: false) → [14]
+                |              ├── Product match? → formatted product list (aiUsed: false) → [14]
+                |              └── No match? → aiUsed: true
+                |                      |
+                |                      v
+                |              [AI Needed?] — aiUsed == true?
+                |                      |
+                |                      ├── YES → [AI Agent (Fallback Only)] + [Chat Model] → [14]
+                |                      └── NO  → [14. Prepare Reply]
+                |
+                └── NO (direct reply from router) → [14. Prepare Reply]
+                        |
+                        v
+        [14. Prepare Reply] — truncate to 2000 chars, format
+                |
+                v
+        [15. Send Messenger Reply] — HTTP POST to Graph API
 ```
 
 ---
 
-## All Nodes Explained
+## All Nodes Explained (17 total)
 
-### Node 1: Chat Trigger
+### Node 1: GET Webhook (Verify)
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Chat Trigger (or Webhook) |
-| **Purpose** | Receives incoming customer messages |
-| **What It Does** | Starts the workflow every time a customer sends a message |
-
-**Beginner Tip:** This is always the FIRST node. Later, you will replace or connect this to WhatsApp, Messenger, or your website widget.
-
-For initial testing, use n8n's built-in **Chat Trigger** node which gives you a test chat window.
+| **Type** | Webhook |
+| **Method** | GET |
+| **Path** | `messenger-webhook` |
+| **Response Mode** | Response Node |
+| **Purpose** | Meta calls this once to verify webhook ownership |
 
 ---
 
-### Node 2: Message Classifier (AI or IF/Switch Node)
+### Node 2: Verify Token Check
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | AI Agent node OR Switch node |
-| **Purpose** | Reads the customer message and decides which branch to take |
-| **What It Does** | Categorizes the message into one of 6 types |
-
-**Option A - Using AI (Recommended):**
-Use an AI node (like OpenAI or a basic AI Agent) with a prompt that classifies messages into categories:
-- `greeting` - Simple hello/thanks
-- `product_inquiry` - Asking about products
-- `faq` - General questions about policies
-- `order_create` - Wants to buy something
-- `order_track` - Asking about an existing order
-- `human_support` - Wants to talk to a person or is frustrated
-
-**Option B - Using Switch Node (No AI needed):**
-Use keyword matching with a Switch node to check if the message contains specific words. (See `chatbot-branching-logic.md` for the keyword lists.)
+| **Type** | IF |
+| **Conditions** | hub.mode == "subscribe" AND hub.verify_token == "CHANGE_ME_VERIFY_TOKEN" |
+| **TRUE** | → Respond with Challenge |
+| **FALSE** | → Respond 403 |
 
 ---
 
-### Node 3: Direct Reply
+### Node 3: Respond with Challenge
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Respond to Chat (or Send Message) |
-| **Purpose** | Replies to simple greetings and pleasantries |
-| **What It Does** | Sends a friendly response without needing to look anything up |
-
-**Example Responses:**
-- "Hi" → "Hello! Welcome to [Brand Name]! How can I help you today? I can help with products, orders, tracking, or answer questions."
-- "Thanks" → "You're welcome! Is there anything else I can help you with?"
-- "Bye" → "Goodbye! Have a great day. Come back anytime!"
+| **Type** | Respond to Webhook |
+| **Code** | 200 |
+| **Body** | hub.challenge value (plain text) |
 
 ---
 
-### Node 4: Product Lookup
+### Node 4: Respond 403 Forbidden
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Search Rows |
-| **Purpose** | Searches the Products tab for matching items |
-| **What It Does** | Looks for products matching the customer's request |
-
-**Configuration:**
-- Spreadsheet: Your "Clothing Brand Chatbot Database"
-- Sheet/Tab: Products
-- Search Column: Product_Name, Category, Colors_Available, or Description
-- Search Value: Keywords extracted from the customer message
-
-**What to search for:**
-- If customer says "black t-shirt" → search for "black" in Colors_Available AND "t-shirt" in Category
-- If customer says "jeans" → search for "jeans" in Category or Product_Name
+| **Type** | Respond to Webhook |
+| **Code** | 403 |
+| **Body** | "Forbidden" |
 
 ---
 
-### Node 5: Format Product Reply
+### Node 5: POST Webhook (Messages)
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Set node + Respond to Chat |
-| **Purpose** | Formats the search results into a nice message |
-| **What It Does** | Takes raw spreadsheet data and creates a readable reply |
+| **Type** | Webhook |
+| **Method** | POST |
+| **Path** | `messenger-webhook` |
+| **Purpose** | Receives every message/event from Messenger |
 
-**Example Reply Format:**
-```
-I found these products for you:
-
-1. Classic Black T-Shirt
-   Price: $29.99
-   Sizes: S, M, L, XL
-   Colors: Black, White, Navy
-   In Stock: Yes
-
-2. Premium Black T-Shirt V-Neck
-   Price: $34.99
-   Sizes: S, M, L, XL
-   Colors: Black, Charcoal
-   In Stock: Yes
-
-Would you like to order any of these? Just tell me which one, your size, and color!
-```
-
-**If no products found:**
-```
-I could not find products matching your request. Could you try different keywords? Or I can show you our categories: T-Shirts, Jeans, Hoodies, Dresses, Accessories.
-```
+Meta sends the message payload here. We respond 200 immediately (Node 6) and process in parallel.
 
 ---
 
-### Node 6: FAQ Lookup
+### Node 6: Respond 200 OK
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Search Rows |
-| **Purpose** | Searches the FAQ tab for matching answers |
-| **What It Does** | Finds the best FAQ answer based on keywords |
+| **Type** | Respond to Webhook |
+| **Code** | 200 |
+| **Body** | "EVENT_RECEIVED" |
+| **Purpose** | Tell Meta we received it (prevents retries) |
 
-**Configuration:**
-- Spreadsheet: Your "Clothing Brand Chatbot Database"
-- Sheet/Tab: FAQ
-- Search Column: Keywords (Column D)
-- Search Value: Words from the customer's message
-
-**How matching works:**
-The customer message is compared against the Keywords column. The FAQ entry with the most matching keywords wins.
+Runs in **parallel** with Extract Message Data — both connect from POST Webhook.
 
 ---
 
-### Node 7: Format FAQ Reply
+### Node 7: Extract Message Data
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Set node + Respond to Chat |
-| **Purpose** | Sends the FAQ answer back to the customer |
-| **What It Does** | Returns the answer from the FAQ tab in a friendly format |
+| **Type** | Code |
+| **Purpose** | Parse Meta's nested JSON to get sender PSID and message text |
 
-**Example Reply:**
-```
-Great question! Here's what I found:
+**Extracts:**
+- `senderPsid` — unique ID for the person
+- `messageText` — what they typed
 
-Q: How long does shipping take?
-A: Standard shipping takes 5-7 business days. Express shipping takes 2-3 business days.
-
-Does this answer your question? If not, I can connect you with our team!
-```
+**Skips (returns skip: true):**
+- Delivery receipts
+- Read receipts
+- Echo messages (sent BY the page)
+- Non-text (images, stickers, audio)
 
 ---
 
-### Node 8: Collect Order Information
+### Node 8: Is Valid Text Message?
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | AI Agent or Set node (with memory/conversation) |
-| **Purpose** | Gathers all details needed to create an order |
-| **What It Does** | Asks the customer for: product, size, color, name, email |
-
-**Information needed for an order:**
-1. Which product (Product_ID or name)
-2. Size
-3. Color
-4. Quantity
-5. Customer name
-6. Customer email
-7. Any special notes
-
-**Conversation flow:**
-```
-Customer: "I want to order the black t-shirt"
-Bot: "Great choice! What size would you like? (S, M, L, XL)"
-Customer: "Large"
-Bot: "Size L, got it! Could I get your name and email to create the order?"
-Customer: "Sarah Johnson, sarah@example.com"
-Bot: "Let me confirm your order..."
-```
+| **Type** | IF |
+| **Condition** | skip == false |
+| **TRUE** | → Continue to Hybrid Router |
+| **FALSE** | → End (no reply needed) |
 
 ---
 
-### Node 9: Save Order to Google Sheets
+### Node 9: Hybrid Router (Rules First)
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Append Row |
-| **Purpose** | Saves the new order to the Orders tab |
-| **What It Does** | Creates a new row with all order details |
+| **Type** | Code |
+| **Purpose** | The brain of the hybrid system — checks rules in priority order |
 
-**Configuration:**
-- Spreadsheet: Your "Clothing Brand Chatbot Database"
-- Sheet/Tab: Orders
-- Operation: Append (add new row at the bottom)
+**Logic order:**
 
-**Data to save:**
-- Generate Order_ID (format: ORD-YYYYMMDD-XXX)
-- Customer_Name: from conversation
-- Customer_Email: from conversation
-- Product_ID: from product lookup
-- Product_Name: from product lookup
-- Size: from conversation
-- Color: from conversation
-- Quantity: from conversation
-- Total_Price: Price x Quantity
-- Order_Status: "Draft"
-- Order_Date: Current date/time
-- Notes: Any special requests
+1. **Greeting/Thanks/Bye** (≤3 words, contains greeting word) → instant static reply
+2. **Support keywords** (human, agent, complaint, refund, fraud, angry patterns) → support handler
+3. **Tracking keywords** (track, order status, ORD-XXXXX pattern) → tracking handler
+4. **Buy/Order keywords** (buy, order, purchase, I want) → order intent handler
+5. **None matched** → pass to sheet lookup (FAQ + Products)
+
+**Why this order?**
+- Support and tracking are checked before products because "I want to return my order" should go to support, not product search
+- Greetings checked first because they're the cheapest (no sheet read needed)
 
 ---
 
-### Node 10: Order Confirmation Reply
+### Node 10: Needs Sheet Lookup?
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Respond to Chat |
-| **Purpose** | Confirms the order was created |
-| **What It Does** | Sends order summary back to customer |
+| **Type** | IF |
+| **Condition** | route == "check_sheets" |
+| **TRUE** | → Read FAQ + Read Products (parallel) |
+| **FALSE** | → Prepare Reply (direct static reply from router) |
 
-**Example Reply:**
-```
-Your order has been created! Here's your summary:
-
-Order Number: ORD-20250120-001
-Product: Classic Black T-Shirt (Size L, Black)
-Quantity: 1
-Total: $29.99
-Status: Draft (our team will confirm shortly)
-
-You will receive a confirmation email at sarah@example.com.
-Is there anything else I can help with?
-```
+**Why this split?** If the Hybrid Router already produced a reply (greeting, support, tracking, order), we skip reading Google Sheets entirely — saves API calls and time.
 
 ---
 
-### Node 11: Tracking Lookup
+### Node 10a: Read FAQ Sheet
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Search Rows |
-| **Purpose** | Finds shipping status for an order |
-| **What It Does** | Searches the Tracking tab by Order_ID or email |
-
-**Configuration:**
-- Spreadsheet: Your "Clothing Brand Chatbot Database"
-- Sheet/Tab: Tracking
-- Search Column: Order_ID or Customer_Email
-- Search Value: Order number or email from customer message
+| **Type** | Google Sheets — Read |
+| **Document** | Clothing Brand Chatbot Database |
+| **Sheet** | FAQ |
+| **Purpose** | Loads all FAQ rows for keyword matching |
 
 ---
 
-### Node 12: Format Tracking Reply
+### Node 10b: Read Products Sheet
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Set node + Respond to Chat |
-| **Purpose** | Sends tracking information to customer |
-| **What It Does** | Formats tracking data into a readable message |
+| **Type** | Google Sheets — Read |
+| **Document** | Clothing Brand Chatbot Database |
+| **Sheet** | Products |
+| **Purpose** | Loads all product variants for search matching |
 
-**Example Reply (order found):**
-```
-Here is the tracking info for order ORD-20250120-001:
-
-Status: In Transit
-Carrier: UPS
-Tracking Number: 1Z999AA10123456784
-Shipped: January 21, 2025
-Estimated Delivery: January 26, 2025
-
-Track your package here: [tracking URL]
-
-Is there anything else I can help with?
-```
-
-**Example Reply (order NOT found):**
-```
-I could not find tracking information for that order. This could mean:
-- The order hasn't shipped yet
-- The order number might be incorrect
-
-Could you double-check your order number? It looks like: ORD-YYYYMMDD-XXX
-Or I can look it up by your email address. Would you like me to connect you with our team?
-```
+Both run in **parallel** to minimize wait time.
 
 ---
 
-### Node 13: Create Support Ticket
+### Node 10c: FAQ + Product Search (No AI)
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Google Sheets - Append Row |
-| **Purpose** | Creates a support ticket for human follow-up |
-| **What It Does** | Adds a new row to the Support Tickets tab |
+| **Type** | Code |
+| **Purpose** | Searches FAQ first, then Products. Only falls to AI if neither matches. |
 
-**Configuration:**
-- Spreadsheet: Your "Clothing Brand Chatbot Database"
-- Sheet/Tab: Support Tickets
-- Operation: Append
+**FAQ matching logic:**
+1. Extract meaningful words from customer message
+2. Score each active FAQ by keyword match (Keywords column + Question words)
+3. If best score ≥ 3 → strong match → return FAQ Answer directly (no AI)
 
-**Data to save:**
-- Generate Ticket_ID (format: TKT-YYYYMMDD-XXX)
-- Customer_Name: from conversation
-- Customer_Email: from conversation
-- Channel: which platform they messaged from
-- Issue_Category: type of problem
-- Issue_Description: summary of what they said
-- Priority: based on rules (see chatbot-branching-logic.md)
-- Status: "Open"
-- Created_Date: Current date/time
+**Product matching logic (if FAQ didn't match):**
+1. Score each active product variant against search terms
+2. Group by Product_ID, collect in-stock sizes and colors
+3. If any products found → format reply (no AI)
+
+**If neither matched:** Set `aiUsed: true` → falls through to AI Agent
 
 ---
 
-### Node 14: Human Handoff Reply
+### Node 10d: AI Needed?
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Respond to Chat |
-| **Purpose** | Tells the customer a human will follow up |
-| **What It Does** | Confirms the ticket was created and sets expectations |
-
-**Example Reply:**
-```
-I understand you'd like to speak with our team. I've created a support ticket for you.
-
-Ticket Number: TKT-20250120-001
-Our team will reach out to you within 2-4 hours during business hours (Mon-Fri, 9 AM - 6 PM).
-
-If it's urgent, you can also email us at support@yourbrand.com.
-Is there anything else I can help with in the meantime?
-```
+| **Type** | IF |
+| **Condition** | aiUsed == true |
+| **TRUE** | → AI Agent (Fallback Only) |
+| **FALSE** | → Prepare Reply (FAQ or product reply) |
 
 ---
 
-### Node 15: Fallback Reply
+### Node 10e: AI Agent (Fallback Only)
 
 | Setting | Value |
 |---------|-------|
-| **Node Type** | Respond to Chat |
-| **Purpose** | Handles messages the bot does not understand |
-| **What It Does** | Asks the customer to rephrase or offers options |
+| **Type** | AI Agent (LangChain) |
+| **Purpose** | Generates a helpful reply ONLY when rules and sheets couldn't answer |
 
-**Example Reply:**
-```
-I'm not sure I understood that correctly. Here's what I can help you with:
+**System prompt rules:**
+- Keep answers short (under 200 words)
+- Do NOT invent product names, prices, stock levels, or delivery dates
+- Do NOT provide order status or tracking info
+- Do NOT process refunds or complaints
+- If unsure, recommend speaking with support team
+- Stay within clothing brand support topics only
 
-1. Browse products - "Show me t-shirts" or "What do you have in black?"
-2. Answer questions - "What's your return policy?" or "Do you ship internationally?"
-3. Place an order - "I want to order..." or "I'd like to buy..."
-4. Track an order - "Where is my order ORD-XXXXX?" or "Track my order"
-5. Talk to a human - "I need help" or "Speak to someone"
+---
 
-Which would you like?
-```
+### Node 10f: Chat Model
+
+| Setting | Value |
+|---------|-------|
+| **Type** | LangChain Chat OpenAI |
+| **Model** | gpt-4o-mini (cheapest) |
+| **Purpose** | The AI model that powers the AI Agent |
+| **Credential** | Placeholder — replace with your OpenAI API key |
+
+---
+
+### Node 11: Tracking Lookup (No AI)
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Code |
+| **Purpose** | Handles order tracking requests |
+| **AI Used?** | No |
+
+If order ID detected in message → acknowledge and confirm lookup.
+If no order ID → ask customer to provide it.
+
+---
+
+### Node 12: Support Ticket Handler (No AI)
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Code |
+| **Purpose** | Handles human support requests and angry customers |
+| **AI Used?** | No |
+
+Returns a message confirming the request has been escalated to the team.
+
+---
+
+### Node 13: Order Intent Handler
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Code |
+| **Purpose** | Handles buy/order intent detection |
+| **AI Used?** | No |
+
+Returns a message asking for the product details needed to create an order.
+
+---
+
+### Node 14: Prepare Reply
+
+| Setting | Value |
+|---------|-------|
+| **Type** | Code |
+| **Purpose** | Normalizes the reply text before sending |
+
+**What it does:**
+- Extracts reply text from whichever upstream node provided it
+- Truncates to 1950 characters (Messenger limit is 2000)
+- Provides a fallback message if something went wrong
+
+---
+
+### Node 15: Send Messenger Reply
+
+| Setting | Value |
+|---------|-------|
+| **Type** | HTTP Request |
+| **Method** | POST |
+| **URL** | `https://graph.facebook.com/v18.0/me/messages` |
+| **Auth** | Header Auth (Bearer token — Page Access Token) |
+| **Body** | `{ recipient: { id: PSID }, messaging_type: "RESPONSE", message: { text: reply } }` |
 
 ---
 
 ## Node Connections Summary
 
-| From Node | To Node | Condition |
-|-----------|---------|-----------|
-| Chat Trigger | Message Classifier | Always (every message) |
-| Message Classifier | Direct Reply | Category = greeting |
-| Message Classifier | Product Lookup | Category = product_inquiry |
-| Message Classifier | FAQ Lookup | Category = faq |
-| Message Classifier | Collect Order Info | Category = order_create |
-| Message Classifier | Tracking Lookup | Category = order_track |
-| Message Classifier | Create Support Ticket | Category = human_support |
-| Message Classifier | Fallback Reply | Category = unknown |
-| Product Lookup | Format Product Reply | Always |
-| FAQ Lookup | Format FAQ Reply | Always |
-| Collect Order Info | Save Order | When all info collected |
-| Save Order | Order Confirmation Reply | Always |
-| Tracking Lookup | Format Tracking Reply | Always |
-| Create Support Ticket | Human Handoff Reply | Always |
+| From | To | Condition |
+|------|----|-----------|
+| GET Webhook | Verify Token Check | Always |
+| Verify Token Check | Respond with Challenge | TRUE |
+| Verify Token Check | Respond 403 | FALSE |
+| POST Webhook | Respond 200 OK | Always (parallel) |
+| POST Webhook | Extract Message Data | Always (parallel) |
+| Extract Message Data | Is Valid Text Message? | Always |
+| Is Valid Text Message? | Hybrid Router | TRUE |
+| Is Valid Text Message? | (ends) | FALSE |
+| Hybrid Router | Needs Sheet Lookup? | Always |
+| Needs Sheet Lookup? | Read FAQ + Read Products | TRUE (route=check_sheets) |
+| Needs Sheet Lookup? | Prepare Reply | FALSE (direct reply) |
+| Read FAQ Sheet | FAQ + Product Search | Always |
+| Read Products Sheet | FAQ + Product Search | Always |
+| FAQ + Product Search | AI Needed? | Always |
+| AI Needed? | AI Agent | TRUE (aiUsed=true) |
+| AI Needed? | Prepare Reply | FALSE |
+| AI Agent | Prepare Reply | Always |
+| Tracking Lookup | Prepare Reply | Always |
+| Support Ticket Handler | Prepare Reply | Always |
+| Order Intent Handler | Prepare Reply | Always |
+| Prepare Reply | Send Messenger Reply | Always |
 
 ---
 
-## Error Handling Nodes
+## Credentials Required (3 total)
 
-You should add these extra nodes to handle problems:
-
-### Error: Google Sheets Connection Failed
-
-| Setting | Value |
-|---------|-------|
-| **Node Type** | Error Trigger + Respond to Chat |
-| **Purpose** | Handles cases where Google Sheets cannot be reached |
-| **Reply** | "I'm having trouble looking that up right now. Please try again in a moment, or I can connect you with our team." |
-
-### Error: No Results Found
-
-| Setting | Value |
-|---------|-------|
-| **Node Type** | IF node (check if results are empty) |
-| **Purpose** | Handles cases where a search returns no results |
-| **Reply** | A helpful message suggesting alternatives (shown in node descriptions above) |
-
-### Error: Missing Information for Order
-
-| Setting | Value |
-|---------|-------|
-| **Node Type** | IF node (check if required fields are filled) |
-| **Purpose** | Makes sure all order details are collected before saving |
-| **Reply** | "I still need your [missing field] to complete the order. Could you provide that?" |
+| Credential | Type in n8n | What For | When It's Used |
+|-----------|-------------|----------|----------------|
+| **Google Sheets OAuth2** | Google Sheets OAuth2 | Reading FAQ and Products tabs | Every message that reaches sheet lookup |
+| **Facebook Page Access Token** | Header Auth | Sending replies via Messenger | Every reply |
+| **OpenAI API** | OpenAI API | AI Agent fallback responses | Only when rules + sheets can't answer (10-30% of messages) |
 
 ---
 
-## n8n Credentials You Will Need
+## Data Flow
 
-| Credential | What For | How To Get It |
-|-----------|----------|---------------|
-| **Google Sheets OAuth2** | Reading/writing to your spreadsheet | In n8n, add a Google Sheets credential and follow the OAuth sign-in flow |
-| **AI Service (Optional)** | For the Message Classifier (if using AI) | Sign up for OpenAI or use n8n's built-in AI features |
-
-**Note:** Do NOT store API keys in this repository. You will set up credentials directly inside n8n.
+```
+Messenger → Meta → POST Webhook → 200 OK (parallel)
+                        |
+                        v
+              Extract PSID + text
+                        |
+                        v
+              Hybrid Router (rules check)
+                        |
+           ┌────────────┼────────────────┐
+           |            |                |
+      greeting/      tracking/        check_sheets
+      support/       order              |
+      (static)       (static)     Read FAQ + Products
+           |            |                |
+           |            |         Score & Match
+           |            |                |
+           |            |         ┌──────┴──────┐
+           |            |         |             |
+           |            |     FAQ/Product    AI Agent
+           |            |      (free)       (costs $)
+           └────────────┼─────────┴─────────────┘
+                        |
+                        v
+                  Prepare Reply
+                        |
+                        v
+              Send via Graph API → Customer sees reply
+```
 
 ---
 
-## Testing Plan
+## Testing Checklist
 
-Before connecting to real customers, test each branch:
+| # | Test | Send in Messenger | Expected Route | AI Used? |
+|---|------|-------------------|---------------|----------|
+| 1 | Greeting | "Hi" | greeting → static reply | No |
+| 2 | Thanks | "Thank you" | thanks → static reply | No |
+| 3 | Bye | "Goodbye" | bye → static reply | No |
+| 4 | FAQ match | "What is your return policy?" | check_sheets → faq_match | No |
+| 5 | Product match | "Show me t-shirts" | check_sheets → product_match | No |
+| 6 | No product | "Purple sandals" | check_sheets → no match → AI | Yes |
+| 7 | Tracking | "Where is my order?" | tracking handler | No |
+| 8 | Tracking with ID | "Track ORD-20250120-001" | tracking handler | No |
+| 9 | Support | "I want to talk to a human" | support handler | No |
+| 10 | Angry | "THIS IS TERRIBLE SERVICE" | support handler | No |
+| 11 | Order intent | "I want to buy the black t-shirt" | order handler | No |
+| 12 | Style question | "What should I wear to a wedding?" | AI fallback | Yes |
+| 13 | Complex question | "Is cotton breathable in summer?" | AI fallback | Yes |
+| 14 | Non-text | (send a photo) | skipped — no reply | No |
+| 15 | Delivery receipt | (auto from Meta) | skipped — no reply | No |
 
-| Test | What To Send | Expected Result |
-|------|-------------|-----------------|
-| Greeting | "Hi" | Friendly welcome message |
-| Product search | "Show me black t-shirts" | Product list from Google Sheets |
-| FAQ | "What is your return policy?" | Return policy answer |
-| Order | "I want to buy the Classic Black T-Shirt in size M" | Order creation flow |
-| Tracking | "Where is order ORD-20250120-001?" | Tracking info |
-| Human handoff | "I want to speak to someone" | Support ticket created |
-| Unknown | "asdfghjkl" | Fallback with menu options |
-| Error | (disconnect Google Sheets temporarily) | Error message |
+---
+
+## Comparison: v1 vs v2
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| Greetings | Not handled (treated as product search) | Static reply (free) |
+| FAQ | Not handled | Matched from FAQ sheet (free) |
+| Products | Always runs product search | Runs only when needed (free) |
+| Tracking | Not handled | Detected and replied (free) |
+| Support | Not handled | Detected and replied (free) |
+| Order intent | Not handled | Detected with guidance (free) |
+| AI fallback | None | AI Agent for complex questions (costs $) |
+| Nodes | 11 | 17 |
+| Credentials | 2 | 3 |
+| Message routing | None (all = product search) | Priority-ordered hybrid routing |

@@ -1,687 +1,468 @@
-# Chatbot Branching Logic
+# Chatbot Branching Logic — Hybrid AI v2
 
 ## Overview
 
-This document explains **how the chatbot decides what to do** when a customer sends a message. Think of it like a receptionist who listens to what someone says, figures out what they need, and directs them to the right department.
+This document explains **how the chatbot decides what to do** when a customer sends a message on Facebook Messenger. The v2 system uses a **hybrid approach**: it checks rules and Google Sheets data first (free), and only calls AI as a last resort (costs money).
+
+**Platform:** Facebook Messenger
+**Design:** Rules-first, AI-fallback
+
+> **v4 Update:** The v4 workflow (`n8n-messenger-hybrid-ai-v4.json`) adds a **Style Recommendation** branch (Branch 7) that is routed **before** order intent. It also uses an AI classifier (GPT-4o-mini) for all intent detection with 8 categories: `order_track`, `style_inquiry`, `order_create`, `human_support`, `product_inquiry`, `faq`, `greeting`, `unknown`. Style is checked before order to prevent misclassifying "What should I wear?" as a purchase intent.
 
 ---
 
-## The 7 Branches (+ Fallback)
-
-Every customer message goes to **one** of these branches:
-
-| Branch # | Name | When To Use |
-|----------|------|-------------|
-| 1 | Direct Reply | Simple greetings, thanks, goodbyes |
-| 2 | Product Lookup | Customer is asking about products |
-| 3 | FAQ Answer | Customer has a general question |
-| 4 | Draft Order Creation | Customer wants to buy something |
-| 5 | Order Tracking | Customer wants to check their order status |
-| 6 | Human Support Handoff | Customer needs a real person |
-| 7 | Style Recommendation | Customer wants outfit/styling advice |
-
----
-
-## How Classification Works
-
-When a message arrives, the chatbot checks it against **keywords** and **patterns**. The first match wins.
-
-### Decision Flowchart
+## The Hybrid Routing Principle
 
 ```
-Message arrives
-    |
-    v
-Does it contain order tracking keywords?
-    YES --> Branch 5: Order Tracking
-    NO  --> continue
-    |
-    v
-Does it contain style/outfit/recommendation keywords?
-    YES --> Branch 7: Style Recommendation
-    NO  --> continue
-    |
-    v
-Does it contain ordering/buying keywords?
-    YES --> Branch 4: Draft Order Creation
-    NO  --> continue
-    |
-    v
-Does it contain human support keywords?
-    YES --> Branch 6: Human Support Handoff
-    NO  --> continue
-    |
-    v
-Does it contain product keywords?
-    YES --> Branch 2: Product Lookup
-    NO  --> continue
-    |
-    v
-Does it match FAQ keywords?
-    YES --> Branch 3: FAQ Answer
-    NO  --> continue
-    |
-    v
-Is it a simple greeting/thanks/goodbye?
-    YES --> Branch 1: Direct Reply
-    NO  --> continue
-    |
-    v
-Fallback: Send menu of options
+┌─────────────────────────────────────────────────────────────┐
+│  PRIORITY ORDER (checked top to bottom, first match wins)   │
+├─────────────────────────────────────────────────────────────┤
+│  1. Static direct replies (greetings/thanks/bye)    FREE    │
+│  2. Human support detection (angry/complaint)       FREE    │
+│  3. Order tracking detection (ORD-XXXXX/status)     FREE    │
+│  4. Order/buy intent detection                      FREE    │
+│  5. FAQ match from Google Sheets                    FREE    │
+│  6. Product match from Google Sheets                FREE    │
+│  7. AI Agent fallback (only if nothing above works) PAID    │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Why this order?** More specific intents (tracking, style) are checked first. Style is checked BEFORE ordering because "What should I wear to a party?" is style advice, not a purchase intent. Greetings are checked last because phrases like "Hi, I want to track my order" should go to tracking, not be treated as just a greeting.
+**Why this order?**
+- Cheapest/fastest checks run first (static replies = instant, no data lookup)
+- More specific intents (support, tracking) before general ones (FAQ, products)
+- AI is the most expensive option — only used when everything else fails
 
 ---
 
-## Branch 1: Direct Reply
+## How Messages Arrive (Messenger-Specific)
+
+```
+Customer types in Messenger
+        |
+        v
+Meta sends POST to your n8n webhook
+        |
+        v
+n8n extracts:
+  - sender PSID (unique ID for this person on your Page)
+  - message text (what they typed)
+        |
+        v
+Skip if: echo, delivery receipt, read receipt, or non-text
+        |
+        v
+Normalize message (lowercase, remove special chars)
+        |
+        v
+Run through hybrid routing logic (this document)
+```
+
+**Key Messenger concepts:**
+- **PSID** (Page-Scoped ID): Each person who messages your Page gets a unique ID
+- **24-hour messaging window**: You can only reply within 24 hours of customer's last message
+- **2000 character limit**: Each text reply max 2000 characters
+
+---
+
+## Branch 1: Static Direct Replies (NO AI)
 
 ### Purpose
-Respond to simple conversational messages that do not need any data lookup.
+Respond instantly to simple conversational messages without any data lookup or AI call.
 
-### Trigger Keywords
+### Detection Rules
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Greetings | hi, hello, hey, good morning, good afternoon, good evening, howdy, what's up |
-| Thanks | thank you, thanks, thx, appreciate it, great thanks |
-| Goodbyes | bye, goodbye, see you, take care, have a good day |
-| Affirmations | ok, okay, sure, got it, understood, perfect, great |
+The message is treated as a greeting/thanks/bye **only if it is 3 words or fewer** AND contains a matching word. This prevents "Hi, I want to track my order" from being classified as just a greeting.
 
-### Example Messages and Responses
+### Trigger Words
 
-| Customer Says | Bot Responds |
-|--------------|-------------|
-| "Hi" | "Hello! Welcome to [Brand Name]! I can help you with: browsing products, answering questions, placing orders, or tracking deliveries. What would you like to do?" |
-| "Hello there!" | "Hey there! Great to have you. How can I help you today?" |
-| "Thank you so much" | "You're welcome! Happy to help. Is there anything else I can do for you?" |
-| "Bye" | "Goodbye! Thanks for chatting with us. Come back anytime!" |
-| "Ok got it" | "Great! Let me know if you need anything else." |
+| Category | Words |
+|----------|-------|
+| **Greetings** | hi, hello, hey, hola, assalamualaikum, salam, yo, sup |
+| **Thanks** | thanks, thank, thankyou, thx, jazakallah, shukria |
+| **Goodbyes** | bye, goodbye, later, seeya, cya |
 
-### Rules
-- Always end with an invitation to continue the conversation
-- Keep responses short and friendly
-- If the greeting includes another intent (like "Hi, do you have jeans?"), route to the OTHER intent instead
+### Responses
+
+| Detected As | Reply |
+|------------|-------|
+| Greeting | "Hello! Welcome to our store. I can help you find products, answer questions, or place an order. What are you looking for today?" |
+| Thanks | "You are welcome! Let me know if there is anything else I can help with." |
+| Bye | "Goodbye! Thanks for chatting with us. Come back anytime!" |
+
+### Cost: FREE (no sheets read, no AI)
 
 ---
 
-## Branch 2: Product Lookup
+## Branch 2: Human Support Detection (NO AI)
 
 ### Purpose
-Find and display products from the Google Sheets Products tab.
+Immediately flag conversations that need a real person — angry customers, complaints, refund requests, or explicit "talk to human" requests.
 
-### Trigger Keywords
+### Detection Rules
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Browsing | show me, do you have, what products, browse, catalog, collection |
-| Product types | t-shirt, tshirt, jeans, hoodie, jacket, dress, skirt, pants, shorts, sweater, shirt |
-| Attributes | black, white, red, blue, small, medium, large, xl, cotton, size |
-| Price-related | how much, price, cost, cheap, affordable, expensive, under $X |
-| Availability | in stock, available, do you carry, do you sell |
+Checked BEFORE products/FAQ because "I want to return my order" should go to support, not product search.
 
-### Example Messages
+### Trigger Words/Patterns
 
-| Customer Says | What The Bot Does |
-|--------------|-------------------|
-| "Do you have black t-shirts?" | Searches Products tab for Category="T-Shirts" AND Colors_Available contains "Black" |
-| "Show me your hoodies" | Searches Products tab for Category="Hoodies" |
-| "What do you have under $40?" | Searches Products tab for Price < 40 |
-| "Is the slim fit jeans available in size 32?" | Searches Products tab for Product_Name contains "Slim Fit Jeans" AND Sizes_Available contains "32" |
-| "What colors does the hoodie come in?" | Searches Products tab for Category="Hoodies", returns Colors_Available |
+| Category | Words/Patterns |
+|----------|---------------|
+| **Direct request** | human, agent, person, representative, manager, speak to, talk to |
+| **Complaints** | complaint, refund, fraud, overcharged, legal, lawyer |
+| **Angry patterns** | Message is mostly UPPERCASE and longer than 10 characters |
 
-### Reply Logic
+### Response
 
-**If products found (1-5 results):**
 ```
-I found [X] product(s) matching your request:
+I understand you need help from our team. I have flagged your conversation for priority support.
 
-1. [Product Name]
-   Price: $[Price]
-   Sizes: [Sizes_Available]
-   Colors: [Colors_Available]
-   Status: [In Stock / Out of Stock]
+Our team will respond to you in this chat within 2-4 hours (business hours: Mon-Fri, 9 AM - 6 PM).
 
-Would you like to order any of these, or would you like me to search for something else?
+If urgent, you can also email: support@yourbrand.com
+
+Is there anything else I can help with while you wait?
 ```
 
-**If products found (more than 5):**
-```
-I found [X] products! Here are the top 5:
-
-[show 5 products]
-
-Would you like me to narrow it down? You can tell me a preferred size, color, or price range.
-```
-
-**If NO products found:**
-```
-I could not find any products matching "[search term]". 
-
-Here are our available categories:
-- T-Shirts
-- Jeans
-- Hoodies
-- Dresses
-- Accessories
-
-Would you like to browse one of these, or can I help with something else?
-```
-
-**If product is out of stock:**
-```
-I found the [Product Name], but it is currently out of stock.
-
-Would you like me to:
-1. Show you similar products that ARE in stock?
-2. Create a support ticket so we can notify you when it is back?
-```
+### Cost: FREE (no sheets read, no AI)
 
 ---
 
-## Branch 3: FAQ Answer
+## Branch 3: Order Tracking Detection (NO AI)
 
 ### Purpose
-Answer common questions using the FAQ tab in Google Sheets.
+Detect when a customer is asking about their order status or delivery.
 
-### Trigger Keywords
+### Detection Rules
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Shipping | shipping, delivery, how long, ship, when will it arrive, shipping cost, free shipping |
-| Returns | return, refund, exchange, send back, money back, return policy |
-| Sizing | size, sizing, fit, measurement, size guide, size chart, what size |
-| Payment | payment, pay, credit card, debit, paypal, apple pay, payment methods |
-| General | policy, hours, location, contact, about, where are you, who are you |
-| Discount | discount, coupon, promo code, sale, deal, offer |
+| Category | Words/Patterns |
+|----------|---------------|
+| **Tracking words** | track, tracking, where is my order, order status, delivery status, has it shipped, my order, when will it arrive |
+| **Order ID pattern** | Any text matching `ORD-XXXXXXXX-XXX` format |
 
-### Example Messages
+### Response Logic
 
-| Customer Says | Bot Searches FAQ Keywords For |
-|--------------|-------------------------------|
-| "How long does shipping take?" | shipping, long, take |
-| "Can I return something?" | return |
-| "What size should I get?" | size |
-| "Do you accept PayPal?" | payment, paypal |
-| "Do you have any discounts?" | discount |
-| "What are your business hours?" | hours |
-
-### Matching Logic
-
-1. Extract keywords from customer message (remove common words like "the", "a", "do", "you")
-2. Compare against the Keywords column in the FAQ tab
-3. Count how many keywords match each FAQ entry
-4. Return the FAQ entry with the MOST matches
-5. If multiple entries tie, return all tied entries
-
-### Reply Logic
-
-**If FAQ match found:**
+**If order ID detected in message:**
 ```
-Great question! Here's what I found:
+I found your order reference: ORD-20250120-001
 
-[Answer from FAQ tab]
+Let me check the status for you. Our team will update you shortly with tracking details.
 
-Does this answer your question? If not, I can:
-- Search for more information
-- Connect you with our team
+If you need immediate help, type "speak to a human".
 ```
 
-**If NO FAQ match found:**
+**If no order ID provided:**
 ```
-I don't have a specific answer for that question in my knowledge base.
+I can help you track your order! Please provide your order number (it looks like ORD-YYYYMMDD-XXX).
 
-Would you like me to:
-1. Connect you with our support team who can help?
-2. Try rephrasing your question?
-
-You can also ask about: shipping, returns, sizing, or payments.
+Example: "Track ORD-20250120-001"
 ```
+
+### Cost: FREE (no AI — future versions will read Tracking tab automatically)
 
 ---
 
-## Branch 4: Draft Order Creation
+## Branch 4: Order/Buy Intent Detection (NO AI)
 
 ### Purpose
-Collect order details from the customer and save a draft order to Google Sheets.
+Detect when a customer wants to purchase something and guide them through the information needed.
 
-### Trigger Keywords
+### Detection Rules
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Buying intent | I want to buy, I want to order, add to cart, purchase, I'll take, I'll get |
-| Order language | order, buy, purchase, get me, I need, I'd like, can I get |
-| Quantity | one, two, three, 1, 2, 3, a pair of, a couple of |
-| Confirmation | yes I want it, I'll order that, let me get that |
+| Category | Words |
+|----------|-------|
+| **Buy intent** | buy, order, purchase, i want, ill take, add to cart, i need, id like |
 
-### Example Messages
-
-| Customer Says | Bot Action |
-|--------------|------------|
-| "I want to order the black t-shirt" | Start order flow, ask for size |
-| "I'll take 2 of the slim fit jeans in blue, size 32" | Most info provided, ask for name/email |
-| "Can I buy that hoodie?" | Start order flow, ask for size and color |
-| "Yes, I want to order it in large" | Continue order flow (customer already browsing) |
-
-### Order Collection Flow
-
-The bot needs to collect these pieces of information (in any order):
+### Response
 
 ```
-Step 1: Which product? (Product_ID or name)
-        |
-        v
-Step 2: What size?
-        |
-        v
-Step 3: What color?
-        |
-        v
-Step 4: How many? (default: 1)
-        |
-        v
-Step 5: Customer name
-        |
-        v
-Step 6: Customer email
-        |
-        v
-Step 7: Any special notes? (optional)
-        |
-        v
-Step 8: Confirm order summary
-        |
-        v
-Step 9: Save to Google Sheets
+Great, I would love to help you place an order!
+
+To create your order, I need:
+1. Which product? (e.g., Classic Black T-Shirt)
+2. What size?
+3. What color?
+4. Your name and email
+5. Shipping address
+
+Which product are you interested in? You can also say "show me t-shirts" to browse first.
 ```
 
-### Conversation Examples
-
-**Example 1: Customer provides info gradually**
-```
-Customer: "I want to buy a black t-shirt"
-Bot:      "Great choice! The Classic Black T-Shirt is $29.99. 
-           What size would you like? Available: S, M, L, XL"
-Customer: "Large please"
-Bot:      "Size L, got it! To create your order, I'll need:
-           - Your full name
-           - Your email address"
-Customer: "Sarah Johnson, sarah@email.com"
-Bot:      "Here's your order summary:
-           
-           Product: Classic Black T-Shirt
-           Size: L | Color: Black | Qty: 1
-           Total: $29.99
-           Name: Sarah Johnson
-           Email: sarah@email.com
-           
-           Shall I confirm this order?"
-Customer: "Yes"
-Bot:      "Order created! Your order number is ORD-20250120-001.
-           Status: Draft (our team will confirm shortly).
-           You'll receive updates at sarah@email.com."
-```
-
-**Example 2: Customer provides most info at once**
-```
-Customer: "I'd like to order 2 Classic Black T-Shirts in size M"
-Bot:      "2x Classic Black T-Shirt, Size M, Black - Total: $59.98
-           To complete your order, I need your name and email address."
-Customer: "John Smith, john@email.com"
-Bot:      "[shows summary and confirms]"
-```
-
-### Validation Rules
-
-| Check | What To Do If It Fails |
-|-------|----------------------|
-| Product does not exist | "I could not find that product. Would you like me to show you what we have?" |
-| Size not available | "Sorry, that size is not available. Available sizes are: [list]. Which would you prefer?" |
-| Color not available | "That color isn't available for this product. Available colors are: [list]." |
-| Product out of stock | "Sorry, that product is currently out of stock. Can I show you similar items?" |
-| Invalid email format | "That email doesn't look quite right. Could you double-check it?" |
-| Customer wants to cancel mid-flow | "No problem! Order cancelled. Let me know if you change your mind." |
+### Cost: FREE (no AI — guides user to provide structured info)
 
 ---
 
-## Branch 5: Order Tracking
+## Branch 5: FAQ Match from Google Sheets (NO AI)
 
 ### Purpose
-Look up order status and shipping information from Google Sheets.
+Answer common questions directly from the FAQ tab without calling AI.
 
-### Trigger Keywords
+### When It Runs
+Only runs if Branches 1-4 didn't match. The FAQ sheet is read and searched.
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Tracking | track, tracking, where is my order, order status, delivery status |
-| Order reference | order number, ORD-, my order, order update |
-| Shipping | has it shipped, when will it arrive, estimated delivery, shipping update |
-| Delivery | delivered, delivery, package, parcel |
+### How FAQ Matching Works
 
-### Example Messages
+1. **Normalize** the customer message (lowercase, remove special characters)
+2. **Extract meaningful words** (remove common words like "the", "and", "for", "what", "how", etc.)
+3. **Score each active FAQ row** against the search words:
+   - Keywords column match: +2 points per keyword hit
+   - Question column word match: +1 point per word hit
+4. **Threshold:** Score must be ≥ 3 to count as a "strong match"
+5. **If strong match found:** Reply with the Answer column directly — NO AI NEEDED
+6. **If no strong match:** Fall through to Product search
 
-| Customer Says | Bot Action |
-|--------------|------------|
-| "Where is my order?" | Ask for order number or email |
-| "Track order ORD-20250120-001" | Search Tracking tab directly |
-| "Has my package shipped yet?" | Ask for order number or email |
-| "When will order ORD-20250120-001 arrive?" | Search Tracking tab, return estimated delivery |
+### FAQ Tab Columns Used
 
-### Lookup Flow
+| Column | Role in Matching |
+|--------|-----------------|
+| **Keywords** | Primary matching — comma-separated trigger words (weighted 2x) |
+| **Question** | Secondary matching — words from the question itself (weighted 1x) |
+| **Answer** | The reply text sent to the customer |
+| **Active** | Must be "YES" — inactive FAQs are skipped |
+| **Sort_Order** | Tie-breaker if two FAQs score equally |
+
+### Example Matching
+
+| Customer Says | Search Words | Best FAQ Match | Score | AI Used? |
+|--------------|-------------|----------------|-------|----------|
+| "What is your return policy?" | return, policy | FAQ with Keywords: "return, refund, exchange, send back, money back" | 4 (2×return + 2×policy match) | No |
+| "How long does shipping take?" | long, shipping, take | FAQ with Keywords: "shipping, delivery, how long, days, arrive" | 6 | No |
+| "Do you accept PayPal?" | accept, paypal | FAQ with Keywords: "payment, pay, credit card, paypal" | 4 | No |
+| "What fabric is the hoodie made of?" | fabric, hoodie, made | No FAQ matches above threshold | 0 | Falls to Products |
+
+### Reply Format (FAQ Match)
+
+The Answer column text is sent directly — no modification needed:
 
 ```
-Step 1: Does the message contain an order number (ORD-XXXXX)?
-        |
-        YES --> Search Tracking tab by Order_ID
-        NO  --> Ask: "I'd be happy to check! Could you provide your 
-                     order number (starts with ORD-) or your email address?"
-        |
-        v
-Step 2: Search Google Sheets Tracking tab
-        |
-        v
-Step 3: Return results or error message
+[Answer from FAQ tab — exactly as written in your spreadsheet]
 ```
 
-### Reply Logic
+### Tips for Better FAQ Matching
 
-**If tracking info found:**
-```
-Here's the status for order [Order_ID]:
+- Add as many keyword variations as possible in the Keywords column
+- Include misspellings customers commonly make
+- Use the Sort_Order column to prioritize when two FAQs might match
+- Set Active = "NO" for seasonal/outdated answers instead of deleting them
 
-Status: [Shipping_Status]
-Carrier: [Carrier]
-Shipped: [Shipped_Date]
-Estimated Delivery: [Estimated_Delivery]
-Tracking Number: [Tracking_Number]
-
-Track your package: [Tracking_URL]
-
-Is there anything else I can help with?
-```
-
-**If order found but NOT shipped yet:**
-```
-I found your order [Order_ID]!
-
-Current Status: [Order_Status from Orders tab]
-
-Your order hasn't shipped yet. Here's what the statuses mean:
-- Draft: Awaiting confirmation
-- Confirmed: Being prepared
-- Processing: Almost ready to ship
-
-You'll receive a notification when it ships. Anything else I can help with?
-```
-
-**If order NOT found:**
-```
-I could not find an order with that number/email. This could mean:
-- The order number might have a typo (format is: ORD-YYYYMMDD-XXX)
-- The order might be under a different email
-
-Would you like to:
-1. Try a different order number or email?
-2. Connect with our support team?
-```
+### Cost: FREE (reads Google Sheets only — no AI call)
 
 ---
 
-## Branch 7: Style Recommendation (NEW in v4)
+## Branch 6: Product Match from Google Sheets (NO AI)
 
 ### Purpose
-Provide outfit and styling advice based on the customer's needs, occasion, or preferences.
+Find and display matching products when the customer is searching or browsing.
 
-### Trigger Keywords
+### When It Runs
+Only runs if FAQ didn't find a strong match.
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Style advice | style, outfit, what to wear, what goes with, how to style, look, fashion |
-| Occasion | party, date, wedding, interview, casual, work, formal, weekend, brunch |
-| Matching | pair with, match, combine, coordinate, goes well with, complement |
-| Recommendations | recommend, suggest, advice, tips, ideas, inspiration |
+### How Product Matching Works
 
-### Example Messages
+1. **Extract search terms** from customer message (remove words < 3 chars and common stop words)
+2. **Filter:** Only products where Active = "YES"
+3. **Score each variant** by checking search terms against:
+   - Product_Name
+   - Category
+   - Description
+   - Size
+   - Color
+   - Search_Keywords
+4. **Filter:** Only variants with score > 0
+5. **Group** matched variants by Product_ID (so one product doesn't show 12 times)
+6. **For each group:** Collect in-stock sizes and colors
+7. **Sort** by score (highest first), limit to top 5 products
+8. **Format** a friendly reply
 
-| Customer Says | Bot Action |
-|--------------|------------|
-| "What should I wear to a party?" | Suggest occasion-appropriate outfits from catalog |
-| "What goes with black jeans?" | Suggest tops/accessories that pair well |
-| "Can you recommend a casual weekend outfit?" | Suggest relaxed outfit combinations |
-| "How do I style a hoodie?" | Suggest layering and pairing options |
-| "I need outfit ideas for a job interview" | Suggest professional-looking combinations |
+### Products Tab Columns Used
 
-### Reply Logic
+| Column | Role in Matching |
+|--------|-----------------|
+| **Product_Name** | Searched against message terms |
+| **Category** | Searched (e.g., "t-shirts", "jeans", "hoodies") |
+| **Description** | Searched for additional context |
+| **Size** | Searched if customer mentions a size |
+| **Color** | Searched if customer mentions a color |
+| **Search_Keywords** | Extra searchable terms you add manually |
+| **Active** | Must be "YES" — inactive products hidden |
+| **In_Stock** | Used to show only available sizes/colors |
+| **Price** | Displayed in results |
 
-**Standard style response:**
+### Reply Format (Products Found)
+
 ```
-Great question! Here are some styling ideas:
+I found 3 products for you:
 
-Based on your request for [occasion/item]:
+1. Classic Black T-Shirt — $29.99
+   Sizes: S, M, L
+   Colors: Black, White, Navy
 
-1. [Outfit suggestion 1 - using products from catalog]
-2. [Outfit suggestion 2 - using products from catalog]
-3. [Outfit suggestion 3 - mix and match]
+2. Premium V-Neck Tee — $34.99
+   Sizes: S, M, L, XL
+   Colors: Black, Charcoal
 
-Would you like to:
-- See more options?
-- Order any of these items?
-- Get advice for a different occasion?
+3. Graphic Print Tee — $24.99
+   Sizes: M, L, XL
+   Colors: White, Grey
+
+Would you like to order any of these? Just tell me the product, size, and color!
 ```
 
-### Rules
-- Always reference actual products from the catalog when possible
-- If no products match, give general style advice and mention what IS available
-- Style intent takes priority over order_create (asking "what should I wear" is advice, not buying)
-- If the customer says "I want that" after a style suggestion, route their next message to order_create
+### Reply Format (No Products Found)
+
+```
+I couldn't find any products matching "purple sandals".
+
+Here are our categories:
+• T-Shirts
+• Jeans
+• Hoodies
+• Dresses
+• Accessories
+
+Try asking something like "Show me hoodies" or "Black t-shirts in large".
+```
+
+### Cost: FREE (reads Google Sheets only — no AI call)
 
 ---
 
-## Branch 6: Human Support Handoff
+## Branch 7: AI Agent Fallback (COSTS MONEY)
 
 ### Purpose
-Connect the customer to a real human when the bot cannot help, or when they explicitly ask.
+Handle complex or conversational messages that cannot be answered from rules or data. This is the ONLY branch that calls AI.
 
-### Trigger Keywords
+### When It Runs
+Only when ALL of these are true:
+- Not a greeting/thanks/bye
+- Not a support/tracking/order keyword match
+- No FAQ strong match found (score < 3)
+- No product match found (0 results)
+- Search terms exist (not an empty/very short message)
 
-| Category | Keywords/Phrases |
-|----------|-----------------|
-| Direct request | talk to a human, real person, speak to someone, agent, representative, manager |
-| Frustration | this isn't helping, useless, doesn't work, I'm frustrated, terrible service |
-| Complex issues | complaint, wrong item, damaged, broken, overcharged, fraud, urgent |
-| Repeated failure | (customer has asked 3+ times without resolution) |
+### What the AI Agent Can Do
 
-### Automatic Handoff Triggers
+| Allowed | Examples |
+|---------|---------|
+| General style advice | "What should I wear to a wedding?" |
+| Fabric/material questions | "Is cotton better than polyester for summer?" |
+| Styling tips | "How do I style a hoodie?" |
+| General brand questions | "What's your brand about?" |
+| Friendly conversation | "Can you recommend something comfortable?" |
 
-The bot should AUTOMATICALLY hand off to a human (without the customer asking) when:
+### What the AI Agent Must NOT Do
 
-| Situation | Why |
-|-----------|-----|
-| Customer is clearly angry (profanity, ALL CAPS, exclamation marks!!!) | Humans handle emotions better |
-| Bot has failed to understand 3 messages in a row | Bot is not helping |
-| Customer mentions legal action or formal complaint | Needs human attention |
-| Issue involves payment/billing problems | Too sensitive for a bot |
-| Customer says something about damaged/wrong items | Requires human judgment |
+| Forbidden | Why | What It Says Instead |
+|-----------|-----|---------------------|
+| Invent product names or prices | Could mislead customer | "Let me search our catalog — try asking 'show me [category]'" |
+| Make up stock/availability | Could cause order issues | "I can't check specific stock — try 'do you have [product] in [size]'" |
+| Provide order status | Could give wrong info | "For order status, please type 'track ORD-XXXXX'" |
+| Process refunds/complaints | Needs human judgment | "For refunds, type 'speak to a human' and our team will help" |
+| Discuss non-brand topics | Off-brand risk | "I'm best at helping with fashion and our store! What can I help you find?" |
 
-### Priority Assignment Rules
-
-| Condition | Priority | Response Time Goal |
-|-----------|----------|-------------------|
-| Customer is angry OR mentions damaged/wrong item | **High** | Within 2 hours |
-| Customer asks for exchange, has sizing issues, general complaint | **Medium** | Within 4 hours |
-| Bot could not answer a question, customer just prefers humans | **Low** | Within 24 hours |
-
-### Handoff Conversation
+### AI System Prompt (in the workflow)
 
 ```
-Customer: "I want to talk to a real person"
-Bot:      "Of course! I'll connect you with our team right away.
-           
-           To help them assist you faster, could you briefly tell me what you need help with?
-           (Or just say 'skip' and I'll transfer you now)"
-Customer: "I received the wrong size"
-Bot:      "I'm sorry about that! I've created a support ticket:
-           
-           Ticket: TKT-20250120-001
-           Issue: Received wrong size
-           Priority: Medium
-           
-           Our team will contact you within 4 hours (during business hours: Mon-Fri, 9 AM - 6 PM).
-           
-           Is there anything else I can help with while you wait?"
+You are a friendly customer support assistant for a clothing brand. Your job is to help with general style advice, sizing guidance, and store-related questions.
+
+RULES:
+1) Keep answers short (under 200 words).
+2) Do NOT invent product names, prices, stock levels, or delivery dates.
+3) Do NOT provide order status or tracking info — tell the customer to ask 'track my order ORD-XXXXX'.
+4) Do NOT process refunds or complaints — tell the customer to say 'speak to a human'.
+5) If you are unsure, recommend the customer speak with our support team.
+6) Stay within clothing brand support topics only.
 ```
 
-### Information To Collect Before Handoff
-
-Try to collect (but don't force if customer is frustrated):
-
-1. Customer name
-2. Customer email
-3. Brief description of the issue
-4. Related order number (if applicable)
-
-If the customer says "skip" or is clearly frustrated, create the ticket with whatever info you have.
+### Cost: PAID (every AI Agent call costs API credits)
 
 ---
 
-## Fallback Logic (When No Branch Matches)
+## Special Case: No Search Terms Extracted
 
-### When It Triggers
-- Message doesn't match any keyword patterns
-- Message is gibberish or very short/unclear
-- Message is in a language the bot doesn't support
-
-### Fallback Response
+If the message is too short or contains only common words (e.g., "ok", "hmm", "??"), no meaningful search terms can be extracted. In this case, the bot replies with a helpful prompt WITHOUT calling AI:
 
 ```
-I'm not sure I understood that. Here's what I can help with:
-
-1. Products - "Show me t-shirts" or "What's in stock?"
-2. Questions - "What's your return policy?" or "Shipping info"
-3. Place an order - "I want to buy..." 
-4. Track an order - "Where is my order ORD-XXXXX?"
-5. Talk to our team - "Connect me with support"
-
-Which of these can I help you with?
+I'd love to help! You can ask me about our products, shipping, returns, sizing, or place an order. What would you like to know?
 ```
 
-### Fallback Rules
-- Show the fallback menu a maximum of 2 times
-- If the customer triggers fallback 3 times in a row, automatically hand off to human support
-- Log unclear messages so you can improve keyword lists later
+### Cost: FREE (handled in the Code node, no AI call)
 
 ---
 
-## Edge Cases and Special Situations
+## Messages the Bot Ignores (No Reply)
 
-### Customer sends multiple intents in one message
+These events arrive from Meta but should NOT trigger any reply:
 
-**Example:** "Hi, I want to track my order and also buy a new t-shirt"
-
-**Rule:** Handle the FIRST actionable intent. After completing it, ask about the second.
-
-```
-Bot: "Let me help you track your order first! What's your order number?
-     (I'll help you with the t-shirt right after)"
-```
-
-### Customer changes mind mid-conversation
-
-**Example:** In the middle of placing an order, customer says "actually, never mind"
-
-**Rule:** Acknowledge and reset.
-
-```
-Bot: "No problem at all! Order cancelled. Is there something else I can help you with?"
-```
-
-### Customer sends just an emoji
-
-**Rule:** Treat as unclear/greeting depending on the emoji.
-
-| Emoji | Treat As |
-|-------|----------|
-| Thumbs up, smiley | Affirmation ("Got it! Anything else?") |
-| Sad face, angry face | Concern ("Is everything okay? How can I help?") |
-| Question mark | Unclear ("What would you like to know?") |
-| Other | Fallback menu |
-
-### Customer sends a photo/image
-
-**Rule:** The bot cannot analyze images.
-
-```
-Bot: "I received your image, but I'm not able to analyze photos.
-     Could you describe what you need help with in text? 
-     Or I can connect you with our team who can view the image."
-```
-
-### Message is very long (100+ words)
-
-**Rule:** Focus on the first sentence or the most specific keywords. If unclear, summarize what you think they want and confirm.
-
-```
-Bot: "I want to make sure I help you correctly. It sounds like you need help with [topic]. Is that right?"
-```
+| Event Type | How Detected | Why Ignore |
+|-----------|-------------|------------|
+| Delivery receipt | `messaging.delivery` exists | Just confirms message delivered |
+| Read receipt | `messaging.read` exists | Just confirms message seen |
+| Echo | `message.is_echo = true` | Message sent BY your page (not customer) |
+| Image/sticker/audio | `message.text` is missing | v2 only handles text |
+| Postback | `messaging.postback` exists | Button clicks — not yet implemented |
 
 ---
 
-## Keyword Matching Tips for n8n
+## Messenger Constraints
 
-### How To Set Up Keyword Matching in n8n (Without AI)
-
-Use a **Switch** node with these conditions:
-
-1. **Check the message** (convert to lowercase first using a Set node)
-2. **Use "contains" conditions** for each branch
-3. **Order matters** - put more specific checks at the top
-
-Example Switch conditions (checked in order):
-```
-1. Message contains "track" OR "where is my order" OR "ORD-" → Branch 5
-2. Message contains "style" OR "outfit" OR "what to wear" OR "goes with" OR "recommend" → Branch 7
-3. Message contains "buy" OR "order" OR "purchase" OR "I want" → Branch 4  
-4. Message contains "speak to" OR "human" OR "help me" OR frustrated language → Branch 6
-5. Message contains product keywords (t-shirt, jeans, hoodie, etc.) → Branch 2
-6. Message contains FAQ keywords (shipping, return, size, payment) → Branch 3
-7. Message contains greeting keywords (hi, hello, thanks, bye) → Branch 1
-8. Default/else → Fallback
-```
-
-### How To Set Up With AI (Easier but requires API key)
-
-Use an **AI Agent** node or **OpenAI** node with this prompt:
-
-```
-Classify the following customer message into exactly one category.
-Return ONLY the category name, nothing else.
-
-Categories (in priority order):
-- order_track (asking about order status, delivery, tracking, mentions ORD- number)
-- style_inquiry (asking for outfit advice, style recommendations, what goes with X, occasion-based suggestions)
-- order_create (wants to buy/order something specific)
-- human_support (wants a real person, is frustrated, complex issue)
-- product_inquiry (asking about products, browsing, availability)
-- faq (questions about shipping, returns, sizing, payment, policies)
-- greeting (simple hi, thanks, bye, ok)
-- unknown (cannot determine intent)
-
-IMPORTANT: style_inquiry is checked BEFORE order_create. If the message asks for style advice or recommendations (even if it mentions products), classify as style_inquiry.
-
-Customer message: "{customer_message}"
-```
+| Constraint | How We Handle It |
+|-----------|-----------------|
+| 2000 character limit | Prepare Reply node truncates to 1950 chars |
+| No markdown/bold | All replies use plain text + line breaks + bullet (•) |
+| 5-second response window | 200 OK sent immediately in parallel with processing |
+| 24-hour messaging window | All replies are type "RESPONSE" (within window) |
 
 ---
 
-## Summary Decision Table
+## Decision Examples
 
-| If the message is about... | Go to Branch | Priority in checking |
-|---------------------------|-------------|---------------------|
-| Tracking an existing order | 5 - Order Tracking | 1st (most specific) |
-| Style advice, outfits, what to wear | 7 - Style Recommendation | 2nd (before ordering) |
-| Buying/ordering a product | 4 - Draft Order | 3rd |
-| Needing a real human | 6 - Human Handoff | 4th |
-| Asking about products/browsing | 2 - Product Lookup | 5th |
-| General questions (shipping, returns, etc.) | 3 - FAQ | 6th |
-| Simple greeting/thanks/bye | 1 - Direct Reply | 7th |
-| Cannot determine | Fallback | Last resort |
+| Customer Message | Route Taken | Why | AI? |
+|-----------------|-------------|-----|-----|
+| "Hi" | Branch 1 (greeting) | ≤3 words, contains "hi" | No |
+| "Hello, show me jeans" | Branch 6 (products) | >3 words, "hello" not sole intent | No |
+| "Thanks a lot" | Branch 1 (thanks) | ≤3 words, contains "thanks" | No |
+| "What's your return policy?" | Branch 5 (FAQ) | FAQ Keywords match "return" (score ≥3) | No |
+| "Show me black t-shirts" | Branch 6 (products) | Products match "black" + "t-shirts" | No |
+| "Where is my order?" | Branch 3 (tracking) | Contains "where is my order" | No |
+| "Track ORD-20250120-001" | Branch 3 (tracking) | Contains ORD-XXXXX pattern | No |
+| "I want to buy the hoodie" | Branch 4 (order) | Contains "buy" | No |
+| "I want to speak to someone" | Branch 2 (support) | Contains "speak to" | No |
+| "THIS IS TERRIBLE!" | Branch 2 (support) | Uppercase + angry pattern | No |
+| "What should I wear to a beach wedding?" | Branch 7 (AI) | No FAQ/product match | **Yes** |
+| "Is linen good for hot weather?" | Branch 7 (AI) | No FAQ/product match | **Yes** |
+| "hmm" | No-search-terms fallback | No meaningful words | No |
+
+---
+
+## How to Improve Matching (Reduce AI Usage)
+
+If too many messages are hitting the AI fallback:
+
+### Add more FAQ entries
+- Check what customers are asking that goes to AI
+- Create FAQ entries with good Keywords for those topics
+- Example: If customers ask "What's your brand story?" — add an FAQ for it
+
+### Add more Search_Keywords to products
+- If "casual shirts" doesn't find your t-shirts, add "casual" to Search_Keywords
+- If "summer clothes" doesn't match, add "summer" to relevant products
+
+### Lower the FAQ threshold
+- The current threshold is score ≥ 3
+- If good FAQs are being missed, you could lower to ≥ 2 (but risk false matches)
+
+### Add more greeting/support trigger words
+- If customers say "hey there" and it goes to AI, add "hey" to greetings list
+- If customers say "need assistance" and it misses support, add "assistance"
+
+---
+
+## Future Enhancements (v3+)
+
+| Feature | What It Adds |
+|---------|-------------|
+| **Full order creation** | Multi-step order flow with variant validation and Google Sheets write |
+| **Tracking tab lookup** | Actually read Tracking/Orders tabs for real status |
+| **Customer recognition** | Look up PSID in Customers tab for personalization |
+| **Support ticket creation** | Write to Support_Tickets tab during handoff |
+| **Conversation memory** | Remember context across multiple messages |
+| **Messenger buttons** | Send quick-reply buttons for common actions |
