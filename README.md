@@ -12,16 +12,17 @@ This is a **Facebook Messenger chatbot** for a clothing brand. Customers message
 
 ---
 
-## Current Status: v3 — Fixed AI + BD Brand
+## Current Status: v5 — Stable Upgrade
 
-This project is built incrementally. **Version 2 is the latest:**
+This project is built incrementally:
 
 | Version | Feature | Status |
 |---------|---------|--------|
 | **v1** | Product Lookup only | ✅ Ready (backup) |
 | **v2** | Hybrid AI — Greetings + FAQ + Products + Tracking + Support + AI Fallback | ✅ Ready (backup) |
-| **v3** | Fixed AI + Language Detection + Telegram Alerts + BD Brand | ✅ Ready — latest |
-| v4 | Full order creation with multi-step conversation | Planned |
+| **v3** | Fixed AI + Language Detection + Telegram Alerts + BD Brand | ✅ Ready (backup) |
+| **v4** | Style routing + message.mid dedup + canonical output (experimental) | ✅ Ready (backup) |
+| **v5** | Stable upgrade from v3: style routing, dedup, memory, typo normalization, size guide, objection handling, budget-aware search | ✅ **Latest — recommended** |
 
 ### What v2 Does (Hybrid AI — Cost-Saving Design)
 
@@ -73,15 +74,19 @@ The chatbot uses **Facebook Messenger webhooks**, not n8n's built-in Chat Trigge
 
 ---
 
-## Quick Start (v3 — Latest)
+## Quick Start (v5 — Latest)
 
 1. Set up your Google Sheets using `google-sheets-structure.md`
-2. Add product data to the Products tab + FAQ data to the FAQ tab
-3. Import `n8n-messenger-hybrid-ai-v3.json` into n8n
-4. Follow `messenger-hybrid-v3-import-instructions.md` to connect credentials
-5. Test by messaging your Facebook Page!
+2. Add product data to Products tab + FAQ data to FAQ tab
+3. (Optional) Add Size_Guide and Sales_Objections tabs
+4. Import `n8n-messenger-hybrid-ai-v5.json` into n8n
+5. Follow `messenger-hybrid-v5-import-instructions.md` to connect credentials
+6. Run tests from `messenger-hybrid-v5-test-plan.md`
+7. Activate and message your Facebook Page!
 
 **Previous versions (kept as backup):**
+- v4: `n8n-messenger-hybrid-ai-v4.json` + `messenger-hybrid-v4-import-instructions.md`
+- v3: `n8n-messenger-hybrid-ai-v3.json` + `messenger-hybrid-v3-import-instructions.md`
 - v2: `n8n-messenger-hybrid-ai-v2.json` + `messenger-hybrid-v2-import-instructions.md`
 - v1: `n8n-messenger-product-lookup-v1.json` + `messenger-import-instructions.md`
 
@@ -92,33 +97,38 @@ The chatbot uses **Facebook Messenger webhooks**, not n8n's built-in Chat Trigge
 | File | What It Contains |
 |------|-----------------|
 | `README.md` | This file — project overview |
-| **`n8n-messenger-hybrid-ai-v3.json`** | **Importable n8n workflow v3** — fixed AI + language detection + Telegram alerts |
-| **`messenger-hybrid-v3-import-instructions.md`** | **v3 setup guide** — credentials, Telegram, testing |
+| **`n8n-messenger-hybrid-ai-v5.json`** | **Importable n8n workflow v5** — stable upgrade with style routing, dedup, memory, size guide, objections |
+| **`messenger-hybrid-v5-import-instructions.md`** | **v5 setup guide** — credentials, sheets, testing, rollback |
+| **`messenger-hybrid-v5-test-plan.md`** | **v5 test plan** — 37 test cases across 12 categories |
+| `n8n-messenger-hybrid-ai-v4.json` | Workflow v4 (experimental backup) |
+| `messenger-hybrid-v4-import-instructions.md` | v4 setup guide (backup) |
+| `n8n-messenger-hybrid-ai-v3.json` | Workflow v3 (stable backup — rollback target) |
+| `messenger-hybrid-v3-import-instructions.md` | v3 setup guide (backup) |
 | `n8n-messenger-hybrid-ai-v2.json` | Workflow v2 (backup) |
 | `messenger-hybrid-v2-import-instructions.md` | v2 setup guide (backup) |
 | `n8n-messenger-product-lookup-v1.json` | Workflow v1 — product lookup only (backup) |
 | `messenger-import-instructions.md` | v1 setup guide (backup) |
-| `google-sheets-structure.md` | How to set up your Google Sheets database (6 tabs, all columns, examples) |
-| `n8n-workflow-plan.md` | Full workflow architecture — v2 hybrid design |
+| `google-sheets-structure.md` | How to set up your Google Sheets database |
+| `n8n-workflow-plan.md` | Full workflow architecture |
 | `chatbot-branching-logic.md` | How the chatbot decides what to do with each message |
 | `build-tasks.md` | Step-by-step tasks to build and test the system |
-| `n8n-messenger-hybrid-ai-v4.json` | **Importable n8n workflow v4** — style routing, message.mid dedup, single Send node |
-| `messenger-hybrid-v4-import-instructions.md` | **v4 setup guide** — import, credentials, testing |
 
 ---
 
 ## Google Sheets Database Structure
 
-Your chatbot uses **one Google Sheets spreadsheet** with **6 tabs**:
+Your chatbot uses **one Google Sheets spreadsheet** with **8 tabs** (6 required + 2 optional):
 
-| Tab Name | What It Stores | Key Columns |
-|----------|---------------|-------------|
-| **Products** | Product catalog (one row per variant: size + color) | Product_ID, Variant_SKU, Size, Color, Stock_Qty, Search_Keywords, Active |
-| **FAQ** | Common questions and answers | FAQ_ID, Keywords, Answer, Active, Sort_Order |
-| **Orders** | Customer orders with full details | Order_ID, Customer_ID, Variant_SKU, Payment_Status, Order_Status, Channel |
-| **Tracking** | Shipping and delivery information | Order_ID, Tracking_Number, Shipping_Status, Updated_By |
-| **Customers** | Customer profiles and history | Customer_ID, Chat_User_ID, Total_Orders, Total_Spent |
-| **Support_Tickets** | Human support requests with conversation context | Ticket_ID, Conversation_ID, Bot_Summary, Handoff_Reason, Priority |
+| Tab Name | What It Stores | Required? |
+|----------|---------------|-----------|
+| **Products** | Product catalog (one row per variant: size + color) | ✅ Required |
+| **FAQ** | Common questions and answers | ✅ Required |
+| **Orders** | Customer orders with full details | ✅ Required |
+| **Tracking** | Shipping and delivery information | ✅ Required |
+| **Customers** | Customer profiles and history | ✅ Required |
+| **Support_Tickets** | Human support requests with conversation context | ✅ Required |
+| **Size_Guide** | Size recommendations by height/weight (v5) | Optional |
+| **Sales_Objections** | Objection handling responses (v5) | Optional |
 
 See `google-sheets-structure.md` for the complete column list, examples, and setup instructions.
 
@@ -150,24 +160,28 @@ See `google-sheets-structure.md` for the complete column list, examples, and set
 | **Sender PSID for customer identity** | Messenger uses Page-Scoped IDs to identify each customer uniquely |
 | **HTTP Request node for Send API** | n8n sends replies back through Facebook's Graph API |
 | **AI Agent system prompt restricts topics** | Prevents AI from inventing stock levels, prices, or order statuses |
-| **Incremental build (v1 → v2 → v3 → v4)** | Start simple, add complexity gradually, always have a working backup |
-| **v4: Style routed before order intent** | "What should I wear?" is advice, not a purchase — prevents misclassification |
-| **v4: Single final Send node** | All branches output `{replyText, senderId}` to one Messenger Send API call |
-| **v4: message.mid deduplication** | Prevents double-replies when Meta retries webhook delivery |
+| **Incremental build (v1 → v2 → v3 → v4 → v5)** | Start simple, add complexity gradually, always have a working backup |
+| **v5: Style routed before order intent** | "What should I wear?" is advice, not a purchase — prevents misclassification |
+| **v5: Single final Send node** | All branches output canonical `{replyText, senderPsid}` shape |
+| **v5: message.mid deduplication** | Prevents double-replies when Meta retries webhook delivery |
+| **v5: Weak order keywords removed** | "i want", "chai", "lagbe" alone no longer trigger order flow |
+| **v5: Customer memory** | Remembers product interest, size, color across messages |
+| **v5: Typo normalization** | Auto-corrects "delivry", "tshart", "hudie" before routing |
+| **v5: Size guide + objection handling** | Dedicated branches for common BD shopping patterns |
 
-**Fastest path to a working chatbot:** Import `n8n-messenger-hybrid-ai-v4.json` and follow `messenger-hybrid-v4-import-instructions.md`.
+**Fastest path to a working chatbot:** Import `n8n-messenger-hybrid-ai-v5.json` and follow `messenger-hybrid-v5-import-instructions.md`.
 
 ---
 
 ## Important Notes
 
-- This repository contains planning documents AND importable workflow JSONs (v1, v2, v3, and v4)
+- This repository contains planning documents AND importable workflow JSONs (v1, v2, v3, v4, and v5)
 - **No API keys, passwords, or tokens are stored in this repo** — all credentials go inside n8n
-- JSON files use placeholder values (`CHANGE_ME_VERIFY_TOKEN`, `REPLACE_WITH_YOUR_CREDENTIAL_ID`, `TELEGRAM_BOT_TOKEN_PLACEHOLDER`)
+- JSON files use placeholder values (`CHANGE_ME_VERIFY_TOKEN`, `GOOGLE_SHEETS_CREDENTIAL_PLACEHOLDER`, `FACEBOOK_PAGE_ACCESS_TOKEN_PLACEHOLDER`, `AI_CHAT_MODEL_CREDENTIAL_PLACEHOLDER`, `TELEGRAM_BOT_TOKEN_PLACEHOLDER`)
 - All data is stored in YOUR Google Sheets (you control everything)
 - The workflow requires n8n to have a **public HTTPS URL** (Meta won't send to localhost)
-- v1, v2, and v3 JSONs are kept as backups — do not delete them
-- v4 adds style recommendations, message.mid dedup, and canonical output structure
+- v1, v2, v3, and v4 JSONs are kept as backups — do not delete them
+- v5 is the recommended production version (upgraded from stable v3)
 
 ---
 

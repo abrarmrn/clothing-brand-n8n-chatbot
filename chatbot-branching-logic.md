@@ -7,7 +7,15 @@ This document explains **how the chatbot decides what to do** when a customer se
 **Platform:** Facebook Messenger
 **Design:** Rules-first, AI-fallback
 
-> **v4 Update:** The v4 workflow (`n8n-messenger-hybrid-ai-v4.json`) adds a **Style Recommendation** branch (Branch 7) that is routed **before** order intent. It also uses an AI classifier (GPT-4o-mini) for all intent detection with 8 categories: `order_track`, `style_inquiry`, `order_create`, `human_support`, `product_inquiry`, `faq`, `greeting`, `unknown`. Style is checked before order to prevent misclassifying "What should I wear?" as a purchase intent.
+> **v5 Update (Latest):** The v5 Decision Engine (`n8n-messenger-hybrid-ai-v5.json`) upgrades routing with:
+> - **Style/occasion routing BEFORE order intent** — "I need something stylish for Eid under 2000 BDT" routes to style recommendation, NOT order
+> - **Weak order keywords removed** — "need", "want", "chai", "lagbe" alone no longer trigger order flow. Only strong signals like "order korte chai", "buy", "confirm order" trigger orders
+> - **Size guide branch** — height/weight queries get size recommendations from Size_Guide sheet
+> - **Objection handling** — "dam beshi", "last price", "quality kemon" get warm value-focused replies from Sales_Objections sheet
+> - **Typo normalization** — "delivry", "tshart", "hudie", "jins" auto-corrected before routing
+> - **Budget-aware** — detects "under 2000 BDT" and filters products accordingly
+>
+> v5 routing priority: greeting → support → tracking → **style/occasion** → **size** → **objection** → strong order → FAQ → product → AI fallback
 
 ---
 
