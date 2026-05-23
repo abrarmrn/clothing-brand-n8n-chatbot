@@ -1,0 +1,768 @@
+{
+  "name": "Messenger Chatbot v7 - AI-First Hybrid",
+  "active": false,
+  "versionId": "7.0.0",
+  "tags": [
+    {
+      "name": "messenger"
+    },
+    {
+      "name": "v7"
+    },
+    {
+      "name": "ai-first"
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "triggerCount": 0,
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "n001",
+      "name": "Messenger Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        340
+      ],
+      "webhookId": "msg-wh-v7"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "messenger-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "n002",
+      "name": "Webhook Verify",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        100
+      ],
+      "webhookId": "msg-wh-v7"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.challenge }}"
+      },
+      "id": "n003",
+      "name": "Respond Verify",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\":\"ok\"}"
+      },
+      "id": "n004",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        440,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const query = $input.item.json.query || $input.item.json.params || {};\nconst mode = query['hub.mode'];\nconst token = query['hub.verify_token'];\nconst challenge = query['hub.challenge'];\nconst VERIFY_TOKEN = 'YOUR_VERIFY_TOKEN_HERE';\nif (mode === 'subscribe' && token === VERIFY_TOKEN) {\n  return [{ json: { challenge: parseInt(challenge) } }];\n}\nreturn [{ json: { challenge: 'Verification failed' } }];"
+      },
+      "id": "n005",
+      "name": "Verify Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body || $input.item.json;\nlet senderPsid = '';\nlet messageText = '';\nlet messageType = 'text';\nlet audioUrl = '';\nlet timestamp = Date.now();\ntry {\n  const entry = body.entry ? body.entry[0] : body;\n  const messaging = entry.messaging ? entry.messaging[0] : entry;\n  senderPsid = messaging.sender ? messaging.sender.id : (body.sender_id || '');\n  timestamp = messaging.timestamp || Date.now();\n  if (messaging.message) {\n    if (messaging.message.text) {\n      messageText = messaging.message.text;\n      messageType = 'text';\n    } else if (messaging.message.attachments) {\n      const att = messaging.message.attachments[0];\n      if (att.type === 'audio') {\n        audioUrl = att.payload.url;\n        messageType = 'audio';\n      } else {\n        messageType = 'unsupported';\n        messageText = '[attachment: ' + att.type + ']';\n      }\n    }\n  } else if (messaging.postback) {\n    messageText = messaging.postback.payload || messaging.postback.title || '';\n    messageType = 'postback';\n  }\n} catch (e) { messageType = 'error'; }\nreturn [{ json: { senderPsid, messageText, messageType, audioUrl, timestamp, dedupeKey: senderPsid + '_' + timestamp } }];"
+      },
+      "id": "n006",
+      "name": "Extract Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.messageText }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        }
+      },
+      "id": "n007",
+      "name": "Has Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const key = $input.item.json.dedupeKey;\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.processed) staticData.processed = {};\nconst now = Date.now();\nObject.keys(staticData.processed).forEach(k => {\n  if (now - staticData.processed[k] > 300000) delete staticData.processed[k];\n});\nif (staticData.processed[key]) return [];\nstaticData.processed[key] = now;\nreturn [$input.item];"
+      },
+      "id": "n008",
+      "name": "Dedup Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "combinator": "or",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.messageType }}",
+              "rightValue": "audio",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "n009",
+      "name": "Is Audio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.audioUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "n010",
+      "name": "Download Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1540,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {
+          "language": "bn"
+        }
+      },
+      "id": "n011",
+      "name": "Transcribe Audio",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        200
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const transcription = $input.item.json.text || $input.item.json.transcription || '';\nconst prev = $('Dedup Check').item.json;\nif (!transcription || transcription.trim().length < 2) {\n  return [{ json: { ...prev, messageText: '__VOICE_FAILED__', messageType: 'voice_failed' } }];\n}\nreturn [{ json: { ...prev, messageText: transcription.trim(), messageType: 'voice_transcribed' } }];"
+      },
+      "id": "n012",
+      "name": "Set Transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "sheetName": "Products",
+        "options": {}
+      },
+      "id": "n013",
+      "name": "Load Products Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1540,
+        400
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "sheetName": "FAQ",
+        "options": {}
+      },
+      "id": "n014",
+      "name": "Load FAQ Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1540,
+        540
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "sheetName": "Conversation_Memory",
+        "options": {}
+      },
+      "id": "n015",
+      "name": "Load Memory Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1540,
+        680
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const senderPsid = $input.item.json.senderPsid;\nconst messageText = $input.item.json.messageText;\nconst messageType = $input.item.json.messageType;\n\nlet allProducts = [];\ntry { allProducts = $('Load Products Sheet').all().map(i => i.json); } catch(e) {}\n\nlet allFaq = [];\ntry { allFaq = $('Load FAQ Sheet').all().map(i => i.json); } catch(e) {}\n\nlet memory = {};\ntry {\n  const memRows = $('Load Memory Sheet').all().map(i => i.json);\n  const myMem = memRows.find(r => r.senderPsid === senderPsid);\n  if (myMem) memory = myMem;\n} catch(e) {}\n\nconst msgLower = messageText.toLowerCase();\nconst keywords = msgLower.split(/\\s+/).filter(w => w.length > 2);\n\nlet scoredProducts = allProducts.map(p => {\n  let score = 0;\n  const searchable = ((p.Product_Name||'') + ' ' + (p.Category||'') + ' ' + (p.Colors_Available||'') + ' ' + (p.Sizes_Available||'') + ' ' + (p.Description||'')).toLowerCase();\n  keywords.forEach(kw => { if (searchable.includes(kw)) score++; });\n  if (memory.lastCategory && searchable.includes(memory.lastCategory.toLowerCase())) score += 2;\n  if (memory.lastProductName && searchable.includes(memory.lastProductName.toLowerCase())) score += 3;\n  return { ...p, _score: score };\n});\n\nscoredProducts.sort((a, b) => b._score - a._score);\nlet contextProducts = scoredProducts.slice(0, 5).filter(p => p._score > 0);\n\nif (contextProducts.length === 0 && memory.lastCategory) {\n  contextProducts = allProducts.filter(p => p.Category && p.Category.toLowerCase() === memory.lastCategory.toLowerCase()).slice(0, 5);\n}\nif (contextProducts.length === 0) {\n  contextProducts = allProducts.filter(p => p.In_Stock === 'YES').slice(0, 5);\n}\n\nconst productContext = contextProducts.map((p, i) => (i+1) + '. ' + p.Product_Name + ' | Tk' + p.Price + ' | Size: ' + p.Sizes_Available + ' | Color: ' + p.Colors_Available + ' | Stock: ' + p.In_Stock + ' | ID: ' + p.Product_ID).join('\\n');\n\nlet relevantFaq = allFaq.map(f => {\n  let score = 0;\n  const faqKw = (f.Keywords || '').toLowerCase().split(',').map(k => k.trim());\n  keywords.forEach(kw => { if (faqKw.some(fk => fk.includes(kw))) score++; });\n  return { ...f, _score: score };\n}).sort((a, b) => b._score - a._score).slice(0, 3).filter(f => f._score > 0);\n\nconst faqContext = relevantFaq.map(f => 'Q: ' + f.Question + '\\nA: ' + f.Answer).join('\\n\\n');\n\nconst memoryContext = [\n  memory.lastProductName ? 'Last product: ' + memory.lastProductName : '',\n  memory.lastCategory ? 'Last category: ' + memory.lastCategory : '',\n  memory.lastSize ? 'Last size: ' + memory.lastSize : '',\n  memory.lastColor ? 'Last color: ' + memory.lastColor : '',\n  memory.lastIntent ? 'Last intent: ' + memory.lastIntent : '',\n  memory.lastBotReply ? 'Last bot reply: ' + (memory.lastBotReply||'').substring(0, 120) : '',\n  memory.lastUserMessage ? 'Last user msg: ' + memory.lastUserMessage : '',\n  memory.lastShownProducts ? 'Last shown products: ' + memory.lastShownProducts : ''\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { senderPsid, messageText, messageType, productContext, faqContext, memoryContext, memory } }];"
+      },
+      "id": "n016",
+      "name": "Prepare AI Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4.1-mini",
+        "options": {
+          "maxTokens": 500,
+          "temperature": 0.3
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a friendly Bangladeshi clothing brand Messenger sales assistant.\n\nCRITICAL RULES:\n1. ALWAYS reply in short natural mixed Bangla + English (Banglish). Max 1-2 sentences unless listing products.\n2. NEVER write long English paragraphs.\n3. ONLY use products/data from the CONTEXT below. Never invent products, prices, categories.\n4. The word 'ei', 'eta', 'this', 'that one', 'oi' ALWAYS means the last discussed product. NEVER treat 'ei' as a category or abbreviation.\n5. '2 number ta', 'second one', 'first one', '3 number' refers to the numbered product in lastShownProducts.\n6. 'okay', 'accha', 'hmm', 'thik ache' means continue previous context. NEVER greet again.\n7. If data is missing, ask ONE short question. Never restart conversation.\n\nORDER RULES:\n- Weak words (want, need, chai, lagbe, dekhao, something) = browsing, NOT order.\n- Strong order phrases: eta nibo, order korte chai, confirm order, buy, order now, checkout, book this, confirm kore din, order confirm koro, 2 number ta nibo.\n- If product known from memory/list, ask ONLY missing fields.\n- Required: product, size, color, phone, address.\n- If phone/address missing: 'Phone number ar delivery address din, order confirm kore dichhi.'\n- If complete: 'Order confirm. Team shortly contact korbe.'\n\nSUPPORT RULES:\n- Only trigger needsHumanSupport for: refund, wrong item, payment problem, angry complaint, human request.\n- Normal order/product questions are NOT support.\n\nYou MUST return ONLY valid JSON (no markdown, no extra text):\n{\"replyText\": \"your short bangla reply\", \"intent\": \"browse|order|faq|support|greeting|continuation\", \"confidence\": \"high|medium|low\", \"aiUsed\": true, \"needsHumanSupport\": false, \"telegramAlertText\": \"\", \"memoryUpdate\": {\"lastProductId\": \"\", \"lastProductName\": \"\", \"lastCategory\": \"\", \"lastSize\": \"\", \"lastColor\": \"\", \"lastIntent\": \"\", \"lastShownProducts\": \"\"}, \"selectedProductIds\": [], \"lastShownProducts\": []}\n\nOnly fill memoryUpdate fields that changed. telegramAlertText only for orders or support issues."
+            },
+            {
+              "role": "user",
+              "content": "CUSTOMER MEMORY:\n{{ $json.memoryContext || 'No previous memory' }}\n\nAVAILABLE PRODUCTS:\n{{ $json.productContext || 'No products loaded' }}\n\nRELEVANT FAQ:\n{{ $json.faqContext || 'None' }}\n\nCUSTOMER MESSAGE: {{ $json.messageText }}"
+            }
+          ]
+        }
+      },
+      "id": "n017",
+      "name": "AI Generate Reply",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [
+        2460,
+        340
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.text || $input.item.json.content || '';\nconst ctx = $('Prepare AI Context').item.json;\nconst senderPsid = ctx.senderPsid;\nconst messageText = ctx.messageText;\nconst messageType = ctx.messageType;\n\nlet parsed;\ntry {\n  let jsonStr = raw.trim();\n  if (jsonStr.includes('```')) jsonStr = jsonStr.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  parsed = JSON.parse(jsonStr);\n} catch (e) {\n  parsed = { replyText: raw.length > 0 && raw.length < 300 ? raw : 'কিভাবে সাহায্য করতে পারি?', intent: 'unknown', confidence: 'low', aiUsed: true, needsHumanSupport: false, telegramAlertText: '', memoryUpdate: {}, selectedProductIds: [], lastShownProducts: [] };\n}\n\nif (messageType === 'voice_failed') {\n  parsed.replyText = 'Voice clear বুঝতে পারিনি. Please text করে বলবেন অথবা আবার voice দিন.';\n  parsed.intent = 'voice_failed';\n}\nif (!parsed.replyText) parsed.replyText = 'কিভাবে সাহায্য করতে পারি?';\nif (parsed.replyText.length > 500) parsed.replyText = parsed.replyText.substring(0, 497) + '...';\n\nreturn [{ json: { senderPsid, messageText, replyText: parsed.replyText, intent: parsed.intent || 'unknown', confidence: parsed.confidence || 'medium', aiUsed: true, needsHumanSupport: parsed.needsHumanSupport || false, telegramAlertText: parsed.telegramAlertText || '', memoryUpdate: parsed.memoryUpdate || {}, selectedProductIds: parsed.selectedProductIds || [], lastShownProducts: parsed.lastShownProducts || [] } }];"
+      },
+      "id": "n018",
+      "name": "Validate AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nconst senderPsid = data.senderPsid;\nconst memUpdate = data.memoryUpdate || {};\nconst existingMem = $('Prepare AI Context').item.json.memory || {};\n\nconst updatedMemory = {\n  senderPsid: senderPsid,\n  lastProductId: memUpdate.lastProductId || existingMem.lastProductId || '',\n  lastProductName: memUpdate.lastProductName || existingMem.lastProductName || '',\n  lastCategory: memUpdate.lastCategory || existingMem.lastCategory || '',\n  lastSize: memUpdate.lastSize || existingMem.lastSize || '',\n  lastColor: memUpdate.lastColor || existingMem.lastColor || '',\n  lastBudget: memUpdate.lastBudget || existingMem.lastBudget || '',\n  lastOccasion: memUpdate.lastOccasion || existingMem.lastOccasion || '',\n  lastIntent: data.intent || existingMem.lastIntent || '',\n  lastUserMessage: data.messageText || '',\n  lastBotReply: data.replyText || '',\n  lastShownProducts: (memUpdate.lastShownProducts || existingMem.lastShownProducts || '').toString(),\n  updatedAt: new Date().toISOString()\n};\n\nreturn [{ json: { ...data, updatedMemory } }];"
+      },
+      "id": "n019",
+      "name": "Prepare Memory Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2940,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "sheetName": "Conversation_Memory",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "senderPsid": "={{ $json.updatedMemory.senderPsid }}",
+            "lastProductId": "={{ $json.updatedMemory.lastProductId }}",
+            "lastProductName": "={{ $json.updatedMemory.lastProductName }}",
+            "lastCategory": "={{ $json.updatedMemory.lastCategory }}",
+            "lastSize": "={{ $json.updatedMemory.lastSize }}",
+            "lastColor": "={{ $json.updatedMemory.lastColor }}",
+            "lastBudget": "={{ $json.updatedMemory.lastBudget }}",
+            "lastOccasion": "={{ $json.updatedMemory.lastOccasion }}",
+            "lastIntent": "={{ $json.updatedMemory.lastIntent }}",
+            "lastUserMessage": "={{ $json.updatedMemory.lastUserMessage }}",
+            "lastBotReply": "={{ $json.updatedMemory.lastBotReply }}",
+            "lastShownProducts": "={{ $json.updatedMemory.lastShownProducts }}",
+            "updatedAt": "={{ $json.updatedMemory.updatedAt }}"
+          }
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        },
+        "matchingColumns": [
+          "senderPsid"
+        ]
+      },
+      "id": "n020",
+      "name": "Save Memory",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        3180,
+        500
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nreturn [{ json: { recipientId: data.senderPsid, messageText: data.replyText, needsHumanSupport: data.needsHumanSupport || false, telegramAlertText: data.telegramAlertText || '', intent: data.intent } }];"
+      },
+      "id": "n021",
+      "name": "Prepare Final Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3180,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v18.0/me/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"recipient\": { \"id\": \"{{ $json.recipientId }}\" }, \"message\": { \"text\": \"{{ $json.messageText }}\" }, \"messaging_type\": \"RESPONSE\" }",
+        "options": {}
+      },
+      "id": "n022",
+      "name": "Send Messenger Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3420,
+        340
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "MESSENGER_PAGE_TOKEN_ID",
+          "name": "Messenger Page Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "combinator": "or",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.needsHumanSupport }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{ $json.telegramAlertText }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        }
+      },
+      "id": "n023",
+      "name": "Needs Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3420,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botYOUR_BOT_TOKEN/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": \"YOUR_TELEGRAM_CHAT_ID\", \"text\": \"Messenger Alert\\nSender: {{ $json.recipientId }}\\nIntent: {{ $json.intent }}\\n\\n{{ $json.telegramAlertText || 'Customer needs human support' }}\" }",
+        "options": {}
+      },
+      "id": "n024",
+      "name": "Telegram Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3660,
+        540
+      ]
+    }
+  ],
+  "connections": {
+    "Messenger Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Verify": {
+      "main": [
+        [
+          {
+            "node": "Verify Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Logic": {
+      "main": [
+        [
+          {
+            "node": "Respond Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message": {
+      "main": [
+        [
+          {
+            "node": "Has Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Message?": {
+      "main": [
+        [
+          {
+            "node": "Dedup Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Dedup Check": {
+      "main": [
+        [
+          {
+            "node": "Is Audio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Audio?": {
+      "main": [
+        [
+          {
+            "node": "Download Audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Products Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load FAQ Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Memory Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribe Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe Audio": {
+      "main": [
+        [
+          {
+            "node": "Set Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Transcription": {
+      "main": [
+        [
+          {
+            "node": "Load Products Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load FAQ Sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Memory Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Products Sheet": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load FAQ Sheet": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Memory Sheet": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Context": {
+      "main": [
+        [
+          {
+            "node": "AI Generate Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Generate Reply": {
+      "main": [
+        [
+          {
+            "node": "Validate AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate AI Output": {
+      "main": [
+        [
+          {
+            "node": "Prepare Memory Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Memory Update": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Final Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Messenger Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Needs Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Alert?": {
+      "main": [
+        [
+          {
+            "node": "Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  }
+}
