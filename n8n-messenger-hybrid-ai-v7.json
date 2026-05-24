@@ -300,7 +300,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const senderPsid = $input.item.json.senderPsid;\nconst messageText = $input.item.json.messageText;\nconst messageType = $input.item.json.messageType;\n\nlet allProducts = [];\ntry { allProducts = $('Load Products Sheet').all().map(i => i.json); } catch(e) {}\n\nlet allFaq = [];\ntry { allFaq = $('Load FAQ Sheet').all().map(i => i.json); } catch(e) {}\n\nlet memory = {};\ntry {\n  const memRows = $('Load Memory Sheet').all().map(i => i.json);\n  const myMem = memRows.find(r => r.senderPsid === senderPsid);\n  if (myMem) memory = myMem;\n} catch(e) {}\n\nconst msgLower = messageText.toLowerCase();\nconst keywords = msgLower.split(/\\s+/).filter(w => w.length > 2);\n\nlet scoredProducts = allProducts.map(p => {\n  let score = 0;\n  const searchable = ((p.Product_Name||'') + ' ' + (p.Category||'') + ' ' + (p.Colors_Available||'') + ' ' + (p.Sizes_Available||'') + ' ' + (p.Description||'')).toLowerCase();\n  keywords.forEach(kw => { if (searchable.includes(kw)) score++; });\n  if (memory.lastCategory && searchable.includes(memory.lastCategory.toLowerCase())) score += 2;\n  if (memory.lastProductName && searchable.includes(memory.lastProductName.toLowerCase())) score += 3;\n  return { ...p, _score: score };\n});\n\nscoredProducts.sort((a, b) => b._score - a._score);\nlet contextProducts = scoredProducts.slice(0, 5).filter(p => p._score > 0);\n\nif (contextProducts.length === 0 && memory.lastCategory) {\n  contextProducts = allProducts.filter(p => p.Category && p.Category.toLowerCase() === memory.lastCategory.toLowerCase()).slice(0, 5);\n}\nif (contextProducts.length === 0) {\n  contextProducts = allProducts.filter(p => p.In_Stock === 'YES').slice(0, 5);\n}\n\nconst productContext = contextProducts.map((p, i) => (i+1) + '. ' + p.Product_Name + ' | Tk' + p.Price + ' | Size: ' + p.Sizes_Available + ' | Color: ' + p.Colors_Available + ' | Stock: ' + p.In_Stock + ' | ID: ' + p.Product_ID).join('\\n');\n\nlet relevantFaq = allFaq.map(f => {\n  let score = 0;\n  const faqKw = (f.Keywords || '').toLowerCase().split(',').map(k => k.trim());\n  keywords.forEach(kw => { if (faqKw.some(fk => fk.includes(kw))) score++; });\n  return { ...f, _score: score };\n}).sort((a, b) => b._score - a._score).slice(0, 3).filter(f => f._score > 0);\n\nconst faqContext = relevantFaq.map(f => 'Q: ' + f.Question + '\\nA: ' + f.Answer).join('\\n\\n');\n\nconst memoryContext = [\n  memory.lastProductName ? 'Last product: ' + memory.lastProductName : '',\n  memory.lastCategory ? 'Last category: ' + memory.lastCategory : '',\n  memory.lastSize ? 'Last size: ' + memory.lastSize : '',\n  memory.lastColor ? 'Last color: ' + memory.lastColor : '',\n  memory.lastIntent ? 'Last intent: ' + memory.lastIntent : '',\n  memory.lastBotReply ? 'Last bot reply: ' + (memory.lastBotReply||'').substring(0, 120) : '',\n  memory.lastUserMessage ? 'Last user msg: ' + memory.lastUserMessage : '',\n  memory.lastShownProducts ? 'Last shown products: ' + memory.lastShownProducts : ''\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { senderPsid, messageText, messageType, productContext, faqContext, memoryContext, memory } }];"
+        "jsCode": "const senderPsid = $input.item.json.senderPsid;\nconst messageText = $input.item.json.messageText;\nconst messageType = $input.item.json.messageType;\n\nlet allProducts = [];\ntry { allProducts = $('Load Products Sheet').all().map(i => i.json); } catch(e) {}\n\nlet allFaq = [];\ntry { allFaq = $('Load FAQ Sheet').all().map(i => i.json); } catch(e) {}\n\nlet memory = {};\ntry {\n  const memRows = $('Load Memory Sheet').all().map(i => i.json);\n  const myMem = memRows.find(r => String(r.Sender_PSID) === String(senderPsid));\n  if (myMem) memory = myMem;\n} catch(e) {}\n\nconst msgLower = (messageText || '').toLowerCase();\nconst stopWords = ['the','this','that','available','ache','ase','kore','korte','chai','only','just','please','ami','amar'];\nconst keywords = msgLower.split(/\\s+/).filter(w => w.length > 2 && !stopWords.includes(w));\n\nlet scoredProducts = allProducts.map(p => {\n  let score = 0;\n  const searchable = ((p.Product_Name||'') + ' ' + (p.Category||'') + ' ' + (p.Colors_Available||p.Color||'') + ' ' + (p.Sizes_Available||p.Size||'') + ' ' + (p.Description||'')).toLowerCase();\n  keywords.forEach(kw => { if (searchable.includes(kw)) score++; });\n  if (memory.Last_Category && searchable.includes((memory.Last_Category||'').toLowerCase())) score += 2;\n  if (memory.Last_Product_Name && searchable.includes((memory.Last_Product_Name||'').toLowerCase())) score += 3;\n  return { ...p, _score: score };\n});\n\nscoredProducts.sort((a, b) => b._score - a._score);\nlet contextProducts = scoredProducts.slice(0, 7).filter(p => p._score > 0);\n\nif (contextProducts.length === 0 && memory.Last_Category) {\n  contextProducts = allProducts.filter(p => p.Category && p.Category.toLowerCase() === (memory.Last_Category||'').toLowerCase()).slice(0, 5);\n}\nif (contextProducts.length === 0) {\n  contextProducts = allProducts.filter(p => (p.In_Stock === 'YES' || p.In_Stock === 'Yes' || parseInt(p.Stock_Qty||'0') > 0)).slice(0, 7);\n}\nif (contextProducts.length === 0) {\n  contextProducts = allProducts.slice(0, 5);\n}\n\nconst productContext = contextProducts.map((p, i) =>\n  (i+1) + '. ' + (p.Product_Name||'Unknown') + ' | \\u09F3' + (p.Price||'?') + ' | Category: ' + (p.Category||'?') + ' | Size: ' + (p.Sizes_Available||p.Size||'?') + ' | Color: ' + (p.Colors_Available||p.Color||'?') + ' | Stock: ' + (p.In_Stock||p.Stock_Qty||'?') + ' | ID: ' + (p.Product_ID||'?')\n).join('\\n');\n\nconst categories = [...new Set(allProducts.map(p => p.Category).filter(Boolean))];\nconst categoryList = categories.join(', ');\n\nlet relevantFaq = allFaq.map(f => {\n  let score = 0;\n  const faqKw = (f.Keywords || '').toLowerCase().split(',').map(k => k.trim());\n  keywords.forEach(kw => { if (faqKw.some(fk => fk.includes(kw))) score++; });\n  return { ...f, _score: score };\n}).sort((a, b) => b._score - a._score).slice(0, 3).filter(f => f._score > 0);\n\nconst faqContext = relevantFaq.map(f => 'Q: ' + f.Question + '\\nA: ' + f.Answer).join('\\n\\n');\n\nconst memoryContext = [\n  memory.Last_Product_Name ? 'Last product: ' + memory.Last_Product_Name : '',\n  memory.Last_Category ? 'Last category: ' + memory.Last_Category : '',\n  memory.Last_Size ? 'Last size: ' + memory.Last_Size : '',\n  memory.Last_Color ? 'Last color: ' + memory.Last_Color : '',\n  memory.Last_Intent ? 'Last intent: ' + memory.Last_Intent : '',\n  memory.Last_Bot_Reply ? 'Last bot reply: ' + (memory.Last_Bot_Reply||'').substring(0, 150) : '',\n  memory.Last_User_Message ? 'Last user msg: ' + memory.Last_User_Message : '',\n  memory.Last_Shown_Products_With_Numbers ? 'Last shown products: ' + memory.Last_Shown_Products_With_Numbers : '',\n  memory.Last_Product_List ? 'Last product list: ' + memory.Last_Product_List : ''\n].filter(Boolean).join('\\n');\n\nconst lastShownProducts = memory.Last_Shown_Products_With_Numbers || '';\n\nreturn [{ json: { senderPsid, messageText, messageType, productContext, faqContext, memoryContext, lastShownProducts, categoryList, memory, totalProducts: allProducts.length } }];"
       },
       "id": "n016",
       "name": "Prepare AI Context",
@@ -322,11 +322,11 @@
           "values": [
             {
               "role": "system",
-              "content": "You are a friendly Bangladeshi clothing brand Messenger sales assistant.\n\nCRITICAL RULES:\n1. ALWAYS reply in short natural mixed Bangla + English (Banglish). Max 1-2 sentences unless listing products.\n2. NEVER write long English paragraphs.\n3. ONLY use products/data from the CONTEXT below. Never invent products, prices, categories.\n4. The word 'ei', 'eta', 'this', 'that one', 'oi' ALWAYS means the last discussed product. NEVER treat 'ei' as a category or abbreviation.\n5. '2 number ta', 'second one', 'first one', '3 number' refers to the numbered product in lastShownProducts.\n6. 'okay', 'accha', 'hmm', 'thik ache' means continue previous context. NEVER greet again.\n7. If data is missing, ask ONE short question. Never restart conversation.\n\nORDER RULES:\n- Weak words (want, need, chai, lagbe, dekhao, something) = browsing, NOT order.\n- Strong order phrases: eta nibo, order korte chai, confirm order, buy, order now, checkout, book this, confirm kore din, order confirm koro, 2 number ta nibo.\n- If product known from memory/list, ask ONLY missing fields.\n- Required: product, size, color, phone, address.\n- If phone/address missing: 'Phone number ar delivery address din, order confirm kore dichhi.'\n- If complete: 'Order confirm. Team shortly contact korbe.'\n\nSUPPORT RULES:\n- Only trigger needsHumanSupport for: refund, wrong item, payment problem, angry complaint, human request.\n- Normal order/product questions are NOT support.\n\nYou MUST return ONLY valid JSON (no markdown, no extra text):\n{\"replyText\": \"your short bangla reply\", \"intent\": \"browse|order|faq|support|greeting|continuation\", \"confidence\": \"high|medium|low\", \"aiUsed\": true, \"needsHumanSupport\": false, \"telegramAlertText\": \"\", \"memoryUpdate\": {\"lastProductId\": \"\", \"lastProductName\": \"\", \"lastCategory\": \"\", \"lastSize\": \"\", \"lastColor\": \"\", \"lastIntent\": \"\", \"lastShownProducts\": \"\"}, \"selectedProductIds\": [], \"lastShownProducts\": []}\n\nOnly fill memoryUpdate fields that changed. telegramAlertText only for orders or support issues."
+              "content": "You are a friendly Bangladeshi clothing brand Messenger sales assistant.\n\nABSOLUTE RULES:\n1. ALWAYS reply in short natural mixed Bangla + English (Banglish). Max 1-2 sentences unless listing products.\n2. NEVER reply with generic fallback like 'কিভাবে সাহায্য করতে পারি?' when the customer asked a clear question.\n3. ONLY use products/data from the CONTEXT below. Never invent products, prices, or categories.\n4. The word 'ei', 'eta', 'this', 'that one', 'oi' ALWAYS means the last discussed product from memory.\n5. '2 number ta', 'second one', 'first one', '3 number' refers to the numbered product in Last shown products.\n6. 'okay', 'accha', 'hmm', 'thik ache' means continue previous context. NEVER greet again.\n\nGREETING HANDLING:\n- If customer says 'hi', 'hello', 'hey', 'assalamualaikum':\n  Reply: 'Hi! কী খুঁজছেন? T-shirt, hoodie নাকি jeans?' (use categories from AVAILABLE CATEGORIES)\n\nBROWSE HANDLING:\n- If customer asks 'ki ki item available?', 'ki ache?', 'products dekhao', 'show items':\n  List products from AVAILABLE PRODUCTS. Show numbered list with price.\n- If asking about specific category: show matching products.\n- ALWAYS use product data from AVAILABLE PRODUCTS section. Never say 'no products'.\n\nORDER HANDLING:\n- Weak words (want, need, chai, lagbe, dekhao) = browsing, NOT order.\n- Strong order: eta nibo, order korte chai, confirm order, buy, order now, checkout, book this, confirm kore din.\n- If 'order korte chai' and memory has previous product: continue with that product, ask only missing fields.\n- If 'order korte chai' but no product in memory: reply 'কোন productটা order করবেন? Name বা number বলুন।'\n- Required: product, size, color, phone, address.\n- If phone/address missing: 'Phone number আর delivery address দিন, order confirm করে দিচ্ছি।'\n- If complete: 'Order confirm ✅ Team shortly contact করবে।'\n\nSUPPORT RULES:\n- Only needsHumanSupport=true for: refund, wrong item, payment problem, angry complaint, human request.\n\nRESPONSE FORMAT - return ONLY valid JSON, no markdown:\n{\"replyText\": \"your short bangla reply\", \"intent\": \"browse|order|faq|support|greeting|continuation\", \"confidence\": \"high|medium|low\", \"aiUsed\": true, \"needsHumanSupport\": false, \"telegramAlertText\": \"\", \"memoryUpdate\": {\"lastProductId\": \"\", \"lastProductName\": \"\", \"lastCategory\": \"\", \"lastSize\": \"\", \"lastColor\": \"\", \"lastIntent\": \"\", \"lastShownProducts\": \"\"}, \"selectedProductIds\": [], \"lastShownProducts\": []}\n\nOnly fill memoryUpdate fields that changed. telegramAlertText only for confirmed orders or support."
             },
             {
               "role": "user",
-              "content": "CUSTOMER MEMORY:\n{{ $json.memoryContext || 'No previous memory' }}\n\nAVAILABLE PRODUCTS:\n{{ $json.productContext || 'No products loaded' }}\n\nRELEVANT FAQ:\n{{ $json.faqContext || 'None' }}\n\nCUSTOMER MESSAGE: {{ $json.messageText }}"
+              "content": "CUSTOMER MEMORY:\n{{ $json.memoryContext || 'No previous memory' }}\n\nAVAILABLE PRODUCTS:\n{{ $json.productContext || 'No products loaded' }}\n\nAVAILABLE CATEGORIES: {{ $json.categoryList || 'Unknown' }}\n\nRELEVANT FAQ:\n{{ $json.faqContext || 'None' }}\n\nLAST SHOWN PRODUCTS: {{ $json.lastShownProducts || 'None' }}\n\nCUSTOMER MESSAGE: {{ $json.messageText }}"
             }
           ]
         }
@@ -348,7 +348,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const raw = $input.item.json.text || $input.item.json.content || '';\nconst ctx = $('Prepare AI Context').item.json;\nconst senderPsid = ctx.senderPsid;\nconst messageText = ctx.messageText;\nconst messageType = ctx.messageType;\n\nlet parsed;\ntry {\n  let jsonStr = raw.trim();\n  if (jsonStr.includes('```')) jsonStr = jsonStr.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  parsed = JSON.parse(jsonStr);\n} catch (e) {\n  parsed = { replyText: raw.length > 0 && raw.length < 300 ? raw : 'কিভাবে সাহায্য করতে পারি?', intent: 'unknown', confidence: 'low', aiUsed: true, needsHumanSupport: false, telegramAlertText: '', memoryUpdate: {}, selectedProductIds: [], lastShownProducts: [] };\n}\n\nif (messageType === 'voice_failed') {\n  parsed.replyText = 'Voice clear বুঝতে পারিনি. Please text করে বলবেন অথবা আবার voice দিন.';\n  parsed.intent = 'voice_failed';\n}\nif (!parsed.replyText) parsed.replyText = 'কিভাবে সাহায্য করতে পারি?';\nif (parsed.replyText.length > 500) parsed.replyText = parsed.replyText.substring(0, 497) + '...';\n\nreturn [{ json: { senderPsid, messageText, replyText: parsed.replyText, intent: parsed.intent || 'unknown', confidence: parsed.confidence || 'medium', aiUsed: true, needsHumanSupport: parsed.needsHumanSupport || false, telegramAlertText: parsed.telegramAlertText || '', memoryUpdate: parsed.memoryUpdate || {}, selectedProductIds: parsed.selectedProductIds || [], lastShownProducts: parsed.lastShownProducts || [] } }];"
+        "jsCode": "const raw = $input.item.json.text || $input.item.json.content || $input.item.json.message?.content || '';\nconst ctx = $('Prepare AI Context').item.json;\nconst senderPsid = ctx.senderPsid;\nconst messageText = ctx.messageText;\nconst messageType = ctx.messageType;\nconst productContext = ctx.productContext || '';\nconst categoryList = ctx.categoryList || '';\n\nlet parsed;\ntry {\n  let jsonStr = raw.trim();\n  if (jsonStr.includes('```')) jsonStr = jsonStr.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const firstBrace = jsonStr.indexOf('{');\n  const lastBrace = jsonStr.lastIndexOf('}');\n  if (firstBrace >= 0 && lastBrace > firstBrace) {\n    jsonStr = jsonStr.substring(firstBrace, lastBrace + 1);\n  }\n  parsed = JSON.parse(jsonStr);\n} catch (e) {\n  const cleanRaw = raw.replace(/```[\\s\\S]*?```/g, '').trim();\n  let fallbackReply = '';\n  const msgLower = (messageText || '').toLowerCase();\n\n  if (msgLower.match(/^(hi|hello|hey|assalam)/)) {\n    fallbackReply = 'Hi! \\u0995\\u09C0 \\u0996\\u09C1\\u0981\\u099C\\u099B\\u09C7\\u09A8? ' + (categoryList ? categoryList.split(', ').slice(0,3).join(', ') + ' available \\u0986\\u099B\\u09C7\\u0964' : '\\u0995\\u09C0 item \\u09A6\\u09B0\\u0995\\u09BE\\u09B0 \\u09AC\\u09B2\\u09C1\\u09A8\\u0964');\n  } else if (msgLower.match(/available|ki ache|item|product|dekhao|show/)) {\n    fallbackReply = productContext ? 'Available items:\\n' + productContext.split('\\n').slice(0,4).join('\\n') + '\\nSize/colour \\u09AC\\u09B2\\u09B2\\u09C7 stock check \\u0995\\u09B0\\u09BF\\u0964' : '\\u098F\\u0996\\u09A8 \\u0995\\u09CB\\u09A8 specific item \\u0996\\u09C1\\u0981\\u099C\\u099B\\u09C7\\u09A8?';\n  } else if (msgLower.match(/order|nibo|buy|confirm/)) {\n    fallbackReply = '\\u0995\\u09CB\\u09A8 product\\u099F\\u09BE order \\u0995\\u09B0\\u09AC\\u09C7\\u09A8? Name \\u09AC\\u09BE number \\u09AC\\u09B2\\u09C1\\u09A8\\u0964';\n  } else if (cleanRaw.length > 5 && cleanRaw.length < 400 && !cleanRaw.includes('{')) {\n    fallbackReply = cleanRaw;\n  } else {\n    fallbackReply = '\\u0986\\u09AA\\u09A8\\u09BE\\u09B0 message \\u09AC\\u09C1\\u099D\\u09A4\\u09C7 \\u09AA\\u09BE\\u09B0\\u09B2\\u09BE\\u09AE\\u0964 \\u0995\\u09C0 item \\u0996\\u09C1\\u0981\\u099C\\u099B\\u09C7\\u09A8 \\u09AC\\u09B2\\u09C1\\u09A8, \\u09B8\\u09BE\\u09B9\\u09BE\\u09AF\\u09CD\\u09AF \\u0995\\u09B0\\u099B\\u09BF\\u0964';\n  }\n\n  parsed = { replyText: fallbackReply, intent: msgLower.match(/^(hi|hello|hey)/) ? 'greeting' : 'browse', confidence: 'low', aiUsed: true, needsHumanSupport: false, telegramAlertText: '', memoryUpdate: {}, selectedProductIds: [], lastShownProducts: [] };\n}\n\nif (messageType === 'voice_failed') {\n  parsed.replyText = 'Voice clear \\u09AC\\u09C1\\u099D\\u09A4\\u09C7 \\u09AA\\u09BE\\u09B0\\u09BF\\u09A8\\u09BF\\u0964 Please text \\u0995\\u09B0\\u09C7 \\u09AC\\u09B2\\u09AC\\u09C7\\u09A8 \\u0985\\u09A5\\u09AC\\u09BE \\u0986\\u09AC\\u09BE\\u09B0 voice \\u09A6\\u09BF\\u09A8\\u0964';\n  parsed.intent = 'voice_failed';\n}\n\nif (!parsed.replyText || parsed.replyText.trim().length === 0) {\n  parsed.replyText = '\\u0995\\u09C0 item \\u0996\\u09C1\\u0981\\u099C\\u099B\\u09C7\\u09A8 \\u09AC\\u09B2\\u09C1\\u09A8, \\u09B8\\u09BE\\u09B9\\u09BE\\u09AF\\u09CD\\u09AF \\u0995\\u09B0\\u099B\\u09BF\\u0964';\n}\nif (parsed.replyText.length > 600) parsed.replyText = parsed.replyText.substring(0, 597) + '...';\n\nreturn [{ json: { senderPsid, messageText, replyText: parsed.replyText, intent: parsed.intent || 'unknown', confidence: parsed.confidence || 'medium', aiUsed: true, needsHumanSupport: parsed.needsHumanSupport || false, telegramAlertText: parsed.telegramAlertText || '', memoryUpdate: parsed.memoryUpdate || {}, selectedProductIds: parsed.selectedProductIds || [], lastShownProducts: parsed.lastShownProducts || [] } }];"
       },
       "id": "n018",
       "name": "Validate AI Output",
@@ -361,10 +361,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.item.json;\nconst senderPsid = data.senderPsid;\nconst memUpdate = data.memoryUpdate || {};\nconst existingMem = $('Prepare AI Context').item.json.memory || {};\n\nconst updatedMemory = {\n  senderPsid: senderPsid,\n  lastProductId: memUpdate.lastProductId || existingMem.lastProductId || '',\n  lastProductName: memUpdate.lastProductName || existingMem.lastProductName || '',\n  lastCategory: memUpdate.lastCategory || existingMem.lastCategory || '',\n  lastSize: memUpdate.lastSize || existingMem.lastSize || '',\n  lastColor: memUpdate.lastColor || existingMem.lastColor || '',\n  lastBudget: memUpdate.lastBudget || existingMem.lastBudget || '',\n  lastOccasion: memUpdate.lastOccasion || existingMem.lastOccasion || '',\n  lastIntent: data.intent || existingMem.lastIntent || '',\n  lastUserMessage: data.messageText || '',\n  lastBotReply: data.replyText || '',\n  lastShownProducts: (memUpdate.lastShownProducts || existingMem.lastShownProducts || '').toString(),\n  updatedAt: new Date().toISOString()\n};\n\nreturn [{ json: { ...data, updatedMemory } }];"
+        "jsCode": "const data = $input.item.json;\nconst senderPsid = data.senderPsid;\nconst memUpdate = data.memoryUpdate || {};\nconst existingMem = $('Prepare AI Context').item.json.memory || {};\n\nconst memoryRow = {\n  Memory_ID: existingMem.Memory_ID || (senderPsid + '_mem'),\n  Sender_PSID: String(senderPsid),\n  Customer_Name: existingMem.Customer_Name || '',\n  Language_Style: existingMem.Language_Style || 'banglish',\n  Last_Intent: data.intent || existingMem.Last_Intent || '',\n  Last_Product_ID: memUpdate.lastProductId || existingMem.Last_Product_ID || '',\n  Last_Product_Name: memUpdate.lastProductName || existingMem.Last_Product_Name || '',\n  Last_Product_List: (memUpdate.lastShownProducts || existingMem.Last_Product_List || '').toString(),\n  Last_Category: memUpdate.lastCategory || existingMem.Last_Category || '',\n  Last_Size: memUpdate.lastSize || existingMem.Last_Size || '',\n  Last_Color: memUpdate.lastColor || existingMem.Last_Color || '',\n  Last_Budget: memUpdate.lastBudget || existingMem.Last_Budget || '',\n  Last_Occasion: memUpdate.lastOccasion || existingMem.Last_Occasion || '',\n  Last_User_Message: (data.messageText || '').substring(0, 300),\n  Last_Bot_Reply: (data.replyText || '').substring(0, 500),\n  Last_Shown_Products_With_Numbers: (memUpdate.lastShownProducts || existingMem.Last_Shown_Products_With_Numbers || '').toString(),\n  Short_Summary: (data.intent || '') + ': ' + (data.messageText || '').substring(0, 80),\n  Updated_At: new Date().toISOString()\n};\n\nreturn [{ json: { ...data, memoryRow } }];"
       },
       "id": "n019",
-      "name": "Prepare Memory Update",
+      "name": "Prepare Memory Row",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -379,26 +379,31 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "senderPsid": "={{ $json.updatedMemory.senderPsid }}",
-            "lastProductId": "={{ $json.updatedMemory.lastProductId }}",
-            "lastProductName": "={{ $json.updatedMemory.lastProductName }}",
-            "lastCategory": "={{ $json.updatedMemory.lastCategory }}",
-            "lastSize": "={{ $json.updatedMemory.lastSize }}",
-            "lastColor": "={{ $json.updatedMemory.lastColor }}",
-            "lastBudget": "={{ $json.updatedMemory.lastBudget }}",
-            "lastOccasion": "={{ $json.updatedMemory.lastOccasion }}",
-            "lastIntent": "={{ $json.updatedMemory.lastIntent }}",
-            "lastUserMessage": "={{ $json.updatedMemory.lastUserMessage }}",
-            "lastBotReply": "={{ $json.updatedMemory.lastBotReply }}",
-            "lastShownProducts": "={{ $json.updatedMemory.lastShownProducts }}",
-            "updatedAt": "={{ $json.updatedMemory.updatedAt }}"
+            "Memory_ID": "={{ $json.memoryRow.Memory_ID }}",
+            "Sender_PSID": "={{ $json.memoryRow.Sender_PSID }}",
+            "Customer_Name": "={{ $json.memoryRow.Customer_Name }}",
+            "Language_Style": "={{ $json.memoryRow.Language_Style }}",
+            "Last_Intent": "={{ $json.memoryRow.Last_Intent }}",
+            "Last_Product_ID": "={{ $json.memoryRow.Last_Product_ID }}",
+            "Last_Product_Name": "={{ $json.memoryRow.Last_Product_Name }}",
+            "Last_Product_List": "={{ $json.memoryRow.Last_Product_List }}",
+            "Last_Category": "={{ $json.memoryRow.Last_Category }}",
+            "Last_Size": "={{ $json.memoryRow.Last_Size }}",
+            "Last_Color": "={{ $json.memoryRow.Last_Color }}",
+            "Last_Budget": "={{ $json.memoryRow.Last_Budget }}",
+            "Last_Occasion": "={{ $json.memoryRow.Last_Occasion }}",
+            "Last_User_Message": "={{ $json.memoryRow.Last_User_Message }}",
+            "Last_Bot_Reply": "={{ $json.memoryRow.Last_Bot_Reply }}",
+            "Last_Shown_Products_With_Numbers": "={{ $json.memoryRow.Last_Shown_Products_With_Numbers }}",
+            "Short_Summary": "={{ $json.memoryRow.Short_Summary }}",
+            "Updated_At": "={{ $json.memoryRow.Updated_At }}"
           }
         },
         "options": {
           "cellFormat": "USER_ENTERED"
         },
         "matchingColumns": [
-          "senderPsid"
+          "Sender_PSID"
         ]
       },
       "id": "n020",
@@ -713,23 +718,7 @@
       "main": [
         [
           {
-            "node": "Prepare Memory Update",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Memory Update": {
-      "main": [
-        [
-          {
-            "node": "Prepare Final Reply",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Save Memory",
+            "node": "Prepare Memory Row",
             "type": "main",
             "index": 0
           }
@@ -762,6 +751,22 @@
           }
         ],
         []
+      ]
+    },
+    "Prepare Memory Row": {
+      "main": [
+        [
+          {
+            "node": "Prepare Final Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   }
